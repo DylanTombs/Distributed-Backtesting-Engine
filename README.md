@@ -1,10 +1,10 @@
-# TradingTransformer
+# Distributed-Backtesting-Engine
 
 A modular, event-driven backtesting system for evaluating machine learning trading strategies. A custom encoder-decoder Transformer is trained on 34 engineered features, exported to a C++ runtime via LibTorch, and executed inside a strongly-typed event pipeline — keeping the research layer and execution layer independently deployable and testable.
 
-[![Python Tests](https://github.com/DylanTombs/TradingTransformer/actions/workflows/python-app.yml/badge.svg)](https://github.com/DylanTombs/TradingTransformer/actions/workflows/python-app.yml)
-[![Build & Test C++](https://github.com/DylanTombs/TradingTransformer/actions/workflows/build.yml/badge.svg)](https://github.com/DylanTombs/TradingTransformer/actions/workflows/build.yml)
-[![CodeQL](https://github.com/DylanTombs/TradingTransformer/actions/workflows/codeql.yml/badge.svg)](https://github.com/DylanTombs/TradingTransformer/actions/workflows/codeql.yml)
+[![Python Tests](https://github.com/DylanTombs/Distributed-Backtesting-Engine/actions/workflows/python-app.yml/badge.svg)](https://github.com/DylanTombs/Distributed-Backtesting-Engine/actions/workflows/python-app.yml)
+[![Build & Test C++](https://github.com/DylanTombs/Distributed-Backtesting-Engine/actions/workflows/build.yml/badge.svg)](https://github.com/DylanTombs/Distributed-Backtesting-Engine/actions/workflows/build.yml)
+[![CodeQL](https://github.com/DylanTombs/Distributed-Backtesting-Engine/actions/workflows/codeql.yml/badge.svg)](https://github.com/DylanTombs/Distributed-Backtesting-Engine/actions/workflows/codeql.yml)
 
 ---
 
@@ -68,12 +68,11 @@ The system produces structured outputs including equity curves and trade logs fo
 ## Quick Start
 
 ```bash
-git clone https://github.com/DylanTombs/TradingTransformer.git
-cd TradingTransformer
+git clone https://github.com/DylanTombs/Distributed-Backtesting-Engine.git
+cd Distributed-Backtesting-Engine
 
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env          # fill in model hyperparameters
 ```
 
 ---
@@ -112,7 +111,7 @@ python run_pipeline.py
 # → models/target_scaler.csv
 
 # Or step by step:
-python research/training/Train.py
+python research/transformer/Interface.py --data-path features/
 python research/exportModel.py
 python scripts/convert_scalers.py   # converts .pkl → .csv for C++
 ```
@@ -185,15 +184,15 @@ correlation_threshold:  0.7      # |ρ| above this discounts new position size
 ## Project Structure
 
 ```
-TradingTransformer/
+Distributed-Backtesting-Engine/
 ├── .github/workflows/
-│   ├── python-app.yml                      pytest + flake8
-│   ├── build.yml                           cmake + ctest (GTest)
+│   ├── python-app.yml                      pytest + flake8 + coverage (≥ 80% gate)
+│   ├── build.yml                           cmake + ctest (GTest) + lcov coverage
 │   └── codeql.yml                          static analysis (Python + C++)
 ├── backtester/
 │   ├── include/
 │   │   ├── config/
-│   │   │   └── BacktestConfig.hpp          YAML config parser (header-only)
+│   │   │   └── BacktestConfig.hpp          YAML config parser + startup validation
 │   │   ├── engine/
 │   │   │   └── BacktestEngine.hpp
 │   │   ├── events/                         MarketEvent, FeatureMarketEvent,
@@ -201,7 +200,7 @@ TradingTransformer/
 │   │   ├── execution/
 │   │   │   └── SimulatedExecution.hpp      slippage + commission model
 │   │   ├── market/
-│   │   │   ├── FeatureCSVDataHandler.hpp
+│   │   │   ├── FeatureCSVDataHandler.hpp   gap detection + gapCount() accessor
 │   │   │   └── MultiAssetDataHandler.hpp   timestamp-synchronised N-symbol handler
 │   │   ├── portfolio/
 │   │   │   ├── Portfolio.hpp               risk sizing, correlation, benchmark
@@ -214,19 +213,27 @@ TradingTransformer/
 │   ├── src/                                Corresponding .cpp implementations
 │   ├── tests/
 │   │   ├── test_portfolio.cpp              33 unit + integration tests
-│   │   └── test_engine.cpp                 engine-level integration tests
+│   │   ├── test_engine.cpp                 engine-level integration tests
+│   │   ├── test_execution.cpp              slippage + commission fill arithmetic
+│   │   ├── test_metrics.cpp                Sharpe, IR, drawdown, alpha tests
+│   │   └── test_data_handler.cpp           gap detection + config validation tests
 │   ├── main.cpp                            MovingAverage strategy entry point
 │   └── ml_main.cpp                         ML multi-asset entry point
 ├── research/
 │   ├── features/
 │   │   ├── pipeline.py                     Feature engineering (bar-by-bar, 34 features)
 │   │   └── technicalIndicators.py          Shared indicator functions
-│   ├── transformer/                        Model definition, training loop, dataset
-│   ├── training/Train.py                   Training entry point
+│   ├── transformer/
+│   │   └── Interface.py                    Training entry point + set_seed()
+│   ├── training/
+│   │   └── sweep.py                        Optuna hyperparameter sweep (TPE + Hyperband)
+│   ├── validation/
+│   │   ├── walk_forward.py                 Expanding-window walk-forward validator
+│   │   └── wf_report.py                    Multi-symbol summary report generator
 │   └── exportModel.py                      TorchScript export + scaler CSV generation
 ├── scripts/
 │   └── convert_scalers.py                  .pkl → .csv conversion (33 features + close = 34)
-├── tests/                                  pytest suite (indicators, dataset, metrics, model)
+├── tests/                                  pytest suite (126 tests, 92% coverage)
 ├── docker/
 │   └── entrypoint.sh                       POSIX shell config validator for Docker
 ├── data/                                   Raw OHLCV CSVs
@@ -236,7 +243,7 @@ TradingTransformer/
 ├── Dockerfile.backtester                   Multi-stage: builder + minimal runtime
 ├── docker-compose.yml
 ├── backtest_config.yaml
-├── run_pipeline.py                         Three-stage pipeline orchestrator
+├── run_pipeline.py                         Three-stage pipeline orchestrator (Pydantic-validated)
 ├── requirements.txt
 ├── ARCHITECTURE.md
 └── DECISIONS.md
@@ -256,7 +263,7 @@ Results from backtesting `MLStrategy` across five large-cap equities using the s
 | ASML   | +182.14%    | 0.62         | 37.46%       | 78.38%   | 3.53          |
 | UNH    | +512.22%    | 0.95         | 27.39%       | 92.86%   | 11.70         |
 
-> Results were produced before the slippage model and risk-based sizing were introduced. Updated results with production execution assumptions are pending a re-run.
+> These results were produced with an earlier version of the execution model prior to the introduction of the realistic slippage model (`half_spread: 0.0005`, `slippage_fraction: 0.0005`, `commission: $1.00`) and risk-based position sizing. A re-run against the current engine is in progress as part of Phase 3 (HTML tearsheet generation), after which this table will be updated with auditable, post-slippage figures.
 
 <p align="center">
   <img src="Results/Results2/performance_comparison.png" width="60%" />
@@ -280,19 +287,21 @@ Results from backtesting `MLStrategy` across five large-cap equities using the s
 
 ## Limitations
 
-- **No walk-forward or out-of-sample validation.** All reported results use a fixed historical window. The model is trained and evaluated on (potentially overlapping) data. Reported metrics may overstate generalisation. Walk-forward validation is the highest-priority next step.
 - **Zero-latency fills.** Signals generated on bar *t* are filled at bar *t*'s close price. This is standard for end-of-day backtesting but would not be acceptable for intraday simulation.
-- **Ticker-boundary data leakage.** A sliding training window that starts at the last bar of one symbol and ends at the first bar of another is currently permitted. This is a known bug, marked `xfail` in `test_dataset.py`.
-- **No hyperparameter optimisation.** Model architecture and training hyperparameters are set manually. An Optuna sweep over the search space has not been run.
-- **No HTML tearsheet.** Performance output is CSV-only. A visual tearsheet (monthly returns heatmap, drawdown chart, rolling Sharpe) has not yet been generated.
+- **Pearson correlation discount.** The portfolio's correlation-aware position sizing uses rolling Pearson correlation. Equity returns are non-normal (fat tails, skew); Spearman rank correlation is more appropriate and is planned for Phase 4.
+- **No HTML tearsheet.** Performance output is CSV-only. A visual tearsheet (monthly returns heatmap, drawdown chart, rolling Sharpe) is the primary deliverable of Phase 3.
+- **Serial feature pipeline.** `pipeline.py` processes symbols sequentially. Parallelisation over symbols via `multiprocessing.Pool` is straightforward and planned for Phase 4.
+- **No short selling.** `SignalType::SHORT` is declared in the event hierarchy but unimplemented in `Portfolio` and `SimulatedExecution`. Full short-selling support is Phase 4.
 
 ---
 
-## Future Work
+## Roadmap
 
-- Walk-forward validation to assess out-of-sample robustness
-- Structured logging via `spdlog` to replace `std::cout` in the engine
-- HTML performance tearsheet (monthly returns heatmap, rolling Sharpe, drawdown chart)
-- Hyperparameter sweep via Optuna, logged to a results table
-- Config schema validation — fail fast with clear error messages for invalid YAML
-- Online feature computation so raw CSVs can be used directly without a separate pipeline step
+See [PDR.md](PDR.md) for the full product development roadmap. Active phases:
+
+| Phase | Focus | Status |
+|-------|-------|--------|
+| [Phase 1](PHASE_1.md) | Correctness & Data Integrity | Complete — merged to `main` |
+| [Phase 2](PHASE_2.md) | Validation Methodology | Code complete — walk-forward + Optuna infrastructure shipped |
+| [Phase 3](PHASE_3.md) | Observability & Production Output | Not started — `spdlog`, HTML tearsheet, signal thresholds |
+| [Phase 4](PHASE_4.md) | Strategy Extension & Scalability | Not started — short selling, parallel pipeline, Spearman |

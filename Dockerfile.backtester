@@ -1,5 +1,5 @@
 # =============================================================================
-# Dockerfile.backtester — TradingTransformer C++ backtesting engine
+# Dockerfile.backtester — Distributed-Backtesting-Engine C++ backtesting engine
 #
 # Multi-stage build:
 #   builder  — full Ubuntu toolchain + LibTorch + CMake → compiles ml_backtest
