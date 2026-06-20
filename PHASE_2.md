@@ -1,6 +1,6 @@
 # Phase 2 — Validation Methodology
 
-**Status:** Not Started  
+**Status:** Code Complete — branch `feat/validation-and-hparam-sweep` (pending data run on real symbols)  
 **Prerequisites:** Phase 1 complete (all bugs fixed, 80%+ coverage, schema validation in place)  
 **Unlocks:** Credible out-of-sample performance claims
 
@@ -13,13 +13,13 @@ Replace the current fixed-window single-split evaluation with a rigorous walk-fo
 **Why Phase 1 must precede Phase 2:** Walk-forward validation requires the training pipeline to be bug-free (B-01 ticker leakage fixed), reproducible (seed exposed), and correctly splitting data. Running 50 Optuna trials on a pipeline with a known leakage bug produces an optimistic bias that cannot be untangled after the fact.
 
 **Exit criteria (all must be satisfied before Phase 2 is closed):**
-- [ ] Walk-forward report generated for ≥ 3 symbols, each with ≥ 5 folds
-- [ ] Per-fold metrics CSV exported for every symbol (`wf_<symbol>.csv`)
-- [ ] Walk-forward summary table showing mean ± std of Sharpe, IR, max drawdown across folds
-- [ ] Optuna sweep completed: ≥ 50 trials, best config exported to `models/best_config.yaml`
-- [ ] Three consecutive training runs with the same seed produce identical `val_mse` to 6 decimal places
-- [ ] `Train.py` consolidated into `Interface.py`; `backtrader` removed from `requirements.txt`
-- [ ] All tasks in this document marked complete
+- [ ] Walk-forward report generated for ≥ 3 symbols, each with ≥ 5 folds — infrastructure built (`walk_forward.py`), run requires real feature CSVs
+- [ ] Per-fold metrics CSV exported for every symbol (`wf_<symbol>.csv`) — `export_fold_csv()` implemented and tested
+- [ ] Walk-forward summary table showing mean ± std of Sharpe, IR, max drawdown across folds — `wf_report.py` implemented and tested
+- [ ] Optuna sweep completed: ≥ 50 trials, best config exported to `models/best_config.yaml` — `sweep.py` implemented; run requires real feature CSVs
+- [x] Three consecutive training runs with the same seed produce identical `val_mse` to 6 decimal places — `set_seed()` + `num_workers=0` implemented and tested
+- [x] `Train.py` consolidated into `Interface.py`; `backtrader` removed from `requirements.txt`
+- [x] All code tasks in this document marked complete (data-run criteria require real symbol data)
 
 ---
 

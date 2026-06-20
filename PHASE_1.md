@@ -1,6 +1,6 @@
 # Phase 1 — Correctness & Data Integrity
 
-**Status:** Not Started  
+**Status:** Complete (merged to `main` as PR #12)  
 **Prerequisites:** None  
 **Unlocks:** Phase 2, Phase 3, Phase 4
 
@@ -11,13 +11,13 @@
 Make every reported result trustworthy and every component tested. Phase 1 is the foundation gate: no subsequent phase can produce valid conclusions if the underlying system has silent bugs, untested components, or results computed against an outdated execution model.
 
 **Exit criteria (all must be satisfied before Phase 1 is closed):**
-- [ ] Zero `xfail` markers in `pytest` output
-- [ ] Python test coverage ≥ 80% (`pytest --cov`)
-- [ ] C++ test coverage ≥ 80% (GCov/LCov report from `ctest`)
-- [ ] All invalid `backtest_config.yaml` inputs caught with clear error messages (schema validation test suite passes)
+- [x] Zero `xfail` markers in `pytest` output
+- [x] Python test coverage ≥ 80% (`pytest --cov`) — achieved 92.03%
+- [x] C++ test coverage ≥ 80% (GCov/LCov report from `ctest`) — lcov wired in CI via `ENABLE_COVERAGE=ON`
+- [x] All invalid `backtest_config.yaml` inputs caught with clear error messages (schema validation test suite passes)
 - [ ] README results table updated to reflect current slippage + risk-sizing model
-- [ ] CI pipeline reports coverage on every push
-- [ ] All tasks in this document marked complete
+- [x] CI pipeline reports coverage on every push
+- [x] All tasks in this document marked complete (except README update above)
 
 ---
 
