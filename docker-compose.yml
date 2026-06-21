@@ -1,5 +1,5 @@
 # =============================================================================
-# docker-compose.yml — TradingTransformer
+# docker-compose.yml — Distributed-Backtesting-Engine
 #
 # Services:
 #   backtester  — C++ event-driven backtesting engine (ready to run now)

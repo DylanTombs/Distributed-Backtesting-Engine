@@ -1,5 +1,5 @@
 # =============================================================================
-# Dockerfile.python — TradingTransformer ML pipeline
+# Dockerfile.python — Distributed-Backtesting-Engine ML pipeline
 #
 # Responsibilities:
 #   1. Feature engineering: raw OHLCV CSVs  →  enriched feature CSVs

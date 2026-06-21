@@ -19,9 +19,11 @@ The system is split into two independent layers with a well-defined contract at 
 
 **Research Layer (Python)**
 
-- StockDataPD.py  -> pipeline.py
-- Train.py        -> Interface.py
-- exportModel.py  -> transformer.pt, feature_scaler.csv, target_scaler.csv
+- StockDataPD.py    -> pipeline.py
+- Interface.py      -> checkpoint.pth  (training entry point; `Train.py` removed)
+- sweep.py          -> models/best_config.yaml  (Optuna hyperparameter search)
+- walk_forward.py   -> output/wf_<symbol>.csv   (walk-forward validation)
+- exportModel.py    -> transformer.pt, feature_scaler.csv, target_scaler.csv
 
 **Execution Layer (C++)**
 
@@ -37,7 +39,10 @@ The system is split into two independent layers with a well-defined contract at 
 | Component | Layer | Responsibility |
 |---|---|---|
 | `pipeline.py` | Python | Produce enriched feature CSVs from raw OHLCV; identical to training path |
-| `Train.py` / `Interface.py` | Python | Train and validate the Transformer; checkpoint best model |
+| `Interface.py` | Python | Train and validate the Transformer; checkpoint best model; exposes `set_seed()` for reproducible runs |
+| `sweep.py` | Python | Optuna hyperparameter sweep (TPE sampler, Hyperband pruner, SQLite-persistent study) |
+| `walk_forward.py` | Python | Expanding-window walk-forward validator; exports per-fold metrics CSV per symbol |
+| `wf_report.py` | Python | Aggregates per-symbol fold CSVs into a multi-symbol summary table (mean ± std) |
 | `exportModel.py` | Python | Trace model to TorchScript; export scaler parameters to CSV |
 | `convert_scalers.py` | Python | Merge `featureScaler.pkl` + `targetScaler.pkl` into 34-entry `feature_scaler.csv` |
 | `run_pipeline.py` | Python | Three-stage orchestrator: pipeline → train → export, with `--skip-train` flag |
@@ -259,7 +264,7 @@ Bessel correction (`n-1` denominator) is used for both Sharpe and IR to avoid ov
 
 The training/validation split in `DataFrameDataset` is performed by index before the scaler is fit. The scaler is fit on training windows only and applied to both splits. This is validated by `test_dataset.py::test_scaler_fit_on_train_only`.
 
-A known, documented leakage issue exists at ticker boundaries: a sliding window that starts on the last bar of symbol A and ends on the first bar of symbol B is currently allowed. This is marked as `xfail` in `test_dataset.py` and is a tracked bug.
+Ticker-boundary leakage was fixed in Phase 1. `DataFrameDataset.__getitem__` now indexes via `self.valid_indices[index]`, which only contains window start positions that fall entirely within a single symbol's data range. This is validated by `test_dataset.py::test_windows_do_not_cross_ticker_boundaries`.
 
 ### Feature consistency
 
@@ -273,7 +278,7 @@ Any divergence in feature count causes `ScalerParams::transform` to throw a size
 
 ### Reproducibility
 
-Training is not fully deterministic because PyTorch's multi-threaded operations have non-deterministic CUDA kernels by default. For CPU training, results are reproducible given the same environment and random seed. The exported `transformer.pt` is a fixed artefact — backtests against the same feature CSVs are fully deterministic.
+Training reproducibility was addressed in Phase 2. `Interface.py` exposes `set_seed(seed)` which fixes `random`, `numpy`, `torch`, and CUDA seeds, and sets `cudnn.deterministic = True`. All `DataLoader` instances use `num_workers=0` to eliminate inter-process non-determinism. For full GPU determinism, set `CUBLAS_WORKSPACE_CONFIG=:4096:8`. The exported `transformer.pt` is a fixed artefact — backtests against the same feature CSVs are fully deterministic regardless of seed.
 
 ---
 
