@@ -36,6 +36,7 @@ class PipelineConfig(BaseModel):
     feature_dir: str = "features"
     model_dir: str = "models"
     skip_train: bool = False
+    no_tearsheet: bool = False  # skip HTML tearsheet generation
 
     # Sequence window
     seq_len: int = Field(default=30, gt=0, description="Encoder input length")
@@ -112,6 +113,11 @@ def main() -> None:
         action="store_true",
         help="Skip training and use the existing checkpoint in research/models/",
     )
+    parser.add_argument(
+        "--no-tearsheet",
+        action="store_true",
+        help="Skip HTML tearsheet generation (useful in CI/headless environments)",
+    )
     args = parser.parse_args()
 
     # Validate all settings eagerly — fail fast before spawning any subprocess.
@@ -121,6 +127,7 @@ def main() -> None:
             feature_dir=args.feature_dir,
             model_dir=args.model_dir,
             skip_train=args.skip_train,
+            no_tearsheet=args.no_tearsheet,
         )
     except Exception as exc:
         print(f"[PipelineConfig] Invalid configuration: {exc}", file=sys.stderr)
@@ -173,6 +180,34 @@ def main() -> None:
     print("  transformer.pt")
     print("  feature_scaler.csv")
     print("  target_scaler.csv")
+
+    # ------------------------------------------------------------------
+    # Stage 4 — HTML tearsheet (optional; skipped with --no-tearsheet)
+    # Reads from output/ if backtest CSVs already exist there.
+    # ------------------------------------------------------------------
+    if not cfg.no_tearsheet:
+        output_dir = "output"
+        equity_csv  = Path(output_dir) / "ml_equity.csv"
+        trades_csv  = Path(output_dir) / "ml_trades.csv"
+        metrics_csv = Path(output_dir) / "ml_metrics.csv"
+
+        if equity_csv.exists() and trades_csv.exists() and metrics_csv.exists():
+            from datetime import datetime
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            tearsheet_path = Path(output_dir) / f"tearsheet_{ts}.html"
+            print("\n[Stage 4/4] Generating HTML tearsheet")
+            run([
+                python,
+                "research/analysis/tearsheet.py",
+                "--equity",  str(equity_csv),
+                "--trades",  str(trades_csv),
+                "--metrics", str(metrics_csv),
+                "--config",  "backtest_config.yaml",
+                "--output",  str(tearsheet_path),
+            ])
+        else:
+            print("\n[Stage 4/4] Tearsheet skipped — run ./ml_backtest first to "
+                  "produce output/ml_equity.csv, ml_trades.csv, ml_metrics.csv")
 
 
 if __name__ == "__main__":
