@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
-#include <iostream>
 #include <numeric>
+#include <spdlog/spdlog.h>
 
 // ---------------------------------------------------------------------------
 // Construction
@@ -84,8 +84,7 @@ OrderEvent Portfolio::generateOrder(const SignalEvent& signal) {
                          ? latestPrices_.at(sym) : 0.0;
 
     if (price <= 0.0) {
-        std::cerr << "[Portfolio] generateOrder: no price for " << sym
-                  << " — order suppressed\n";
+        spdlog::warn("Portfolio: no price for {} — order suppressed", sym);
         return OrderEvent(sym, OrderType::HOLD, 0, 0.0);
     }
 
@@ -111,14 +110,13 @@ OrderEvent Portfolio::generateOrder(const SignalEvent& signal) {
 
         // Check exposure caps — suppress order if already at limit
         if (currentSymWeight   >= maxSymbolExposure_) {
-            std::cout << "[Portfolio] " << sym
-                      << " symbol exposure cap reached ("
-                      << currentSymWeight * 100 << "%) — order suppressed\n";
+            spdlog::warn("Portfolio: {} symbol exposure cap reached ({:.1f}%) — order suppressed",
+                         sym, currentSymWeight * 100.0);
             return OrderEvent(sym, OrderType::HOLD, 0, price);
         }
         if (currentTotalWeight >= maxTotalExposure_) {
-            std::cout << "[Portfolio] total exposure cap reached ("
-                      << currentTotalWeight * 100 << "%) — order suppressed\n";
+            spdlog::warn("Portfolio: total exposure cap reached ({:.1f}%) — order suppressed",
+                         currentTotalWeight * 100.0);
             return OrderEvent(sym, OrderType::HOLD, 0, price);
         }
 
@@ -142,10 +140,8 @@ OrderEvent Portfolio::generateOrder(const SignalEvent& signal) {
         qty = std::max(1, static_cast<int>(std::floor(qty * discount)));
 
         if (discount < 1.0) {
-            std::cout << "[Portfolio] " << sym
-                      << " correlation discount applied: "
-                      << std::round((1.0 - discount) * 100) << "% size reduction"
-                      << "  final qty=" << qty << "\n";
+            spdlog::warn("Portfolio: {} correlation discount {:.0f}% applied — final qty={}",
+                         sym, (1.0 - discount) * 100.0, qty);
         }
 
         return OrderEvent(sym, OrderType::BUY, qty, price);

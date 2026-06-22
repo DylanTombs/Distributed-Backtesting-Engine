@@ -3,8 +3,8 @@
 
 #include <ctime>
 #include <iomanip>
-#include <iostream>
 #include <memory>
+#include <spdlog/spdlog.h>
 #include <sstream>
 #include <stdexcept>
 
@@ -54,8 +54,8 @@ FeatureCSVDataHandler::FeatureCSVDataHandler(
         featureColIndices_.push_back(colMap[name]);
     }
 
-    std::cout << "FeatureCSVDataHandler: opened " << filename
-              << " (" << featureColumns.size() << " features)" << std::endl;
+    spdlog::info("FeatureCSVDataHandler: opened {} ({} features)",
+                 filename, featureColumns.size());
 }
 
 // ---------------------------------------------------------------------------
@@ -79,9 +79,8 @@ void FeatureCSVDataHandler::streamNext(EventQueue& queue) {
     if (!prevTimestamp_.empty()) {
         const int gap = daysBetween(prevTimestamp_, timestamp);
         if (gap > 3) {
-            std::cerr << "[FeatureCSVDataHandler] WARNING: " << gap
-                      << "-day gap between " << prevTimestamp_
-                      << " and " << timestamp << " in " << symbol_ << "\n";
+            spdlog::warn("Date gap in {}: {}-day gap between {} and {}",
+                         symbol_, gap, prevTimestamp_, timestamp);
             ++gapCount_;
         }
     }

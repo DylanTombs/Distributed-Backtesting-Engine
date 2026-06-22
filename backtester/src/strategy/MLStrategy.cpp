@@ -2,8 +2,8 @@
 #include "events/FeatureMarketEvent.hpp"
 #include "events/SignalEvent.hpp"
 
-#include <iostream>
 #include <memory>
+#include <spdlog/spdlog.h>
 #include <stdexcept>
 
 // ---------------------------------------------------------------------------
@@ -37,14 +37,14 @@ MLStrategy::MLStrategy(const std::string& modelPath,
         model_       = torch::jit::load(modelPath);
         modelLoaded_ = true;
         model_.eval();
-        std::cout << "MLStrategy: loaded model from " << modelPath << std::endl;
+        spdlog::info("MLStrategy: loaded model from {}", modelPath);
     } catch (const c10::Error& e) {
-        std::cerr << "MLStrategy: failed to load model: " << e.what() << std::endl;
+        spdlog::error("MLStrategy: failed to load model: {}", e.what());
         modelLoaded_ = false;
     }
 #else
     (void)modelPath;  // suppress unused-parameter warning
-    std::cout << "MLStrategy: compiled without LibTorch — inference disabled" << std::endl;
+    spdlog::warn("MLStrategy: compiled without LibTorch — inference disabled");
 #endif
 }
 
@@ -58,9 +58,8 @@ void MLStrategy::onMarketEvent(const MarketEvent& event, EventQueue& queue) {
     if (!featEvent) return;
 
     if (static_cast<int>(featEvent->features.size()) != nFeatures_) {
-        std::cerr << "MLStrategy: expected " << nFeatures_
-                  << " features, got " << featEvent->features.size()
-                  << " — skipping bar" << std::endl;
+        spdlog::error("MLStrategy: expected {} features, got {} — skipping bar",
+                      nFeatures_, featEvent->features.size());
         return;
     }
 
@@ -86,9 +85,8 @@ void MLStrategy::onMarketEvent(const MarketEvent& event, EventQueue& queue) {
         predictedClose > currentClose * (1.0 + buyThreshold_)) {
         queue.push(std::make_shared<SignalEvent>(event.symbol, SignalType::LONG));
         hasPosition_ = true;
-        std::cout << "[MLStrategy] LONG  @ " << event.timestamp
-                  << "  price=" << currentClose
-                  << "  pred="  << predictedClose << std::endl;
+        spdlog::debug("MLStrategy LONG  {} @ {}  price={:.4f}  pred={:.4f}",
+                      event.symbol, event.timestamp, currentClose, predictedClose);
         return;
     }
 
@@ -97,9 +95,8 @@ void MLStrategy::onMarketEvent(const MarketEvent& event, EventQueue& queue) {
         predictedClose < currentClose * (1.0 - exitThreshold_)) {
         queue.push(std::make_shared<SignalEvent>(event.symbol, SignalType::EXIT));
         hasPosition_ = false;
-        std::cout << "[MLStrategy] EXIT  @ " << event.timestamp
-                  << "  price=" << currentClose
-                  << "  pred="  << predictedClose << std::endl;
+        spdlog::debug("MLStrategy EXIT  {} @ {}  price={:.4f}  pred={:.4f}",
+                      event.symbol, event.timestamp, currentClose, predictedClose);
     }
 }
 
