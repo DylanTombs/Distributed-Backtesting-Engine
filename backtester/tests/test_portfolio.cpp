@@ -224,5 +224,5 @@ TEST_F(PortfolioTest, ExportTradesWritesQuantityColumn) {
 
     std::string header;
     std::getline(file, header);
-    EXPECT_EQ(header, "timestamp,symbol,price,quantity,direction,profit");
+    EXPECT_EQ(header, "timestamp,symbol,price,quantity,direction,profit,pnl");
 }
