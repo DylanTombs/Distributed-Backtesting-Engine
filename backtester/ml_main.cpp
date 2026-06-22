@@ -137,8 +137,8 @@ int main(int argc, char* argv[]) {
                 config.targScalerCsv,
                 /*seqLen=*/        30,
                 /*nFeatures=*/     nFeatures,
-                /*buyThreshold=*/  0.005,
-                /*exitThreshold=*/ 0.0);
+                config.buyThreshold,
+                config.exitThreshold);
             compositeStrategy.addSymbol(sym.symbol, std::move(strat));
         }
 

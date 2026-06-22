@@ -173,10 +173,12 @@ void Portfolio::updateFill(const FillEvent& fill) {
 
     if (fill.quantity > 0) {
         lastBuyPrice_ = fill.price;
-        trades_.push_back({ts, fill.symbol, fill.price, fill.quantity, "BUY", true});
+        trades_.push_back({ts, fill.symbol, fill.price, fill.quantity, "BUY", true, 0.0});
     } else {
-        const bool profit = fill.price > lastBuyPrice_;
-        trades_.push_back({ts, fill.symbol, fill.price, -fill.quantity, "SELL", profit});
+        const int    qty    = -fill.quantity;
+        const double pnl    = (fill.price - lastBuyPrice_) * qty - fill.commission;
+        const bool   profit = pnl > 0.0;
+        trades_.push_back({ts, fill.symbol, fill.price, qty, "SELL", profit, pnl});
     }
 }
 
@@ -286,12 +288,13 @@ void Portfolio::exportEquityCurve(const std::string& filename) const {
 
 void Portfolio::exportTrades(const std::string& filename) const {
     std::ofstream file(filename);
-    file << "timestamp,symbol,price,quantity,direction,profit\n";
+    file << "timestamp,symbol,price,quantity,direction,profit,pnl\n";
     for (const auto& t : trades_)
         file << t.timestamp << ","
              << t.symbol    << ","
              << t.price     << ","
              << t.quantity  << ","
              << t.direction << ","
-             << t.profit    << "\n";
+             << t.profit    << ","
+             << t.pnl       << "\n";
 }

@@ -77,3 +77,31 @@ risk_free_rate:     0.0       # Annualised risk-free rate for Sharpe calculation
 correlation_window:     60    # Rolling window (days) for Pearson correlation
 correlation_threshold:  0.7   # Correlation above this triggers size discount
                               # (discount scales from 0% at threshold to 50% at 1.0)
+
+# =============================================================================
+# Signal thresholds
+#
+# buy_threshold:   fractional predicted upside required to emit a LONG signal.
+#                  0.005 = 0.5% — signal only when model predicts >0.5% gain.
+# exit_threshold:  fractional predicted decline required to emit an EXIT signal.
+#                  0.000 = any predicted decline triggers exit (most sensitive).
+# Both values must be in [0.0, 0.1].  Changing these does not require recompilation.
+# =============================================================================
+
+buy_threshold:   0.005   # 0.5% predicted upside required for LONG
+exit_threshold:  0.000   # Any predicted decline triggers EXIT
+
+# =============================================================================
+# Logging
+#
+# log_level:  trace | debug | info | warn | error | critical
+#   info  — trade executions, lifecycle events (recommended for production)
+#   debug — per-signal decisions, slippage breakdown (verbose)
+#   trace — per-bar feature vectors (very verbose)
+#
+# log_file:   path for the log file; written alongside console output.
+#             Set to empty string ("") to disable file logging.
+# =============================================================================
+
+log_level:  info
+log_file:   output/backtest.log
