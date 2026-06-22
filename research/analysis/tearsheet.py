@@ -86,8 +86,10 @@ def compute_monthly_returns(equity: pd.DataFrame) -> pd.DataFrame:
 
 def compute_per_symbol_pnl(trades: pd.DataFrame) -> pd.Series:
     """Sum realised P&L per symbol from SELL trades."""
+    if trades.empty or "direction" not in trades.columns or "pnl" not in trades.columns:
+        return pd.Series(dtype=float)
     sells = trades[trades["direction"] == "SELL"]
-    if sells.empty or "pnl" not in sells.columns:
+    if sells.empty:
         return pd.Series(dtype=float)
     return sells.groupby("symbol")["pnl"].sum().sort_values()
 
