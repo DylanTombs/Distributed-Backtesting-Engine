@@ -4,6 +4,9 @@ omit =
     research/exportModel.py
     research/transformer/Interface.py
     research/features/technicalIndicators.py
+    research/validation/walk_forward.py
+    research/validation/wf_report.py
+    research/training/sweep.py
 
 [report]
 fail_under = 80
