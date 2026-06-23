@@ -56,6 +56,14 @@ struct BacktestConfig {
     int    correlationWindow  = 60;   ///< Rolling days for correlation matrix
     double correlationThreshold = 0.7; ///< Correlation above this discounts size
 
+    // ---- Signal thresholds -------------------------------------------------
+    double buyThreshold  = 0.005; ///< Fractional predicted upside required for LONG
+    double exitThreshold = 0.000; ///< Fractional predicted decline required for EXIT
+
+    // ---- Logging -----------------------------------------------------------
+    std::string logLevel = "info";           ///< trace|debug|info|warn|error|critical
+    std::string logFile  = "output/backtest.log"; ///< Log file path (empty = console only)
+
     // ---- Validation --------------------------------------------------------
     /// Throws std::invalid_argument if any field violates its constraint.
     void validate() const {
@@ -83,6 +91,10 @@ struct BacktestConfig {
         require(correlationWindow  >  0,     "correlationWindow must be > 0");
         require(correlationThreshold >= 0.0 && correlationThreshold <= 1.0,
                 "correlationThreshold must be in [0, 1]");
+        require(buyThreshold  >= 0.0 && buyThreshold  <= 0.1,
+                "buyThreshold must be in [0, 0.1]");
+        require(exitThreshold >= 0.0 && exitThreshold <= 0.1,
+                "exitThreshold must be in [0, 0.1]");
 
         require(fileExists(modelPt),       "modelPt path does not exist");
         require(fileExists(featScalerCsv), "featScalerCsv path does not exist");
@@ -130,6 +142,14 @@ struct BacktestConfig {
         setDouble("risk_free_rate",        cfg.riskFreeRate);
         setInt   ("correlation_window",    cfg.correlationWindow);
         setDouble("correlation_threshold", cfg.correlationThreshold);
+
+        // Signal thresholds
+        setDouble("buy_threshold",  cfg.buyThreshold);
+        setDouble("exit_threshold", cfg.exitThreshold);
+
+        // Logging
+        setStr("log_level", cfg.logLevel);
+        setStr("log_file",  cfg.logFile);
 
         // Symbol list: primary symbol + symbol_1..symbol_19
         if (kv.count("symbol") && kv.count("feature_csv"))

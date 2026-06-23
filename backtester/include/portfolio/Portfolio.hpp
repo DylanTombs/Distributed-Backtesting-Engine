@@ -58,6 +58,7 @@ public:
         int         quantity = 0;
         std::string direction;  ///< "BUY" or "SELL"
         bool        profit   = false;
+        double      pnl      = 0.0; ///< Realised P&L for SELL trades; 0 for BUY
     };
 
     // ---- Core event handlers ------------------------------------------------

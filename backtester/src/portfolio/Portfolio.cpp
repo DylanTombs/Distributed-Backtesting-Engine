@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
-#include <iostream>
 #include <numeric>
+#include <spdlog/spdlog.h>
 
 // ---------------------------------------------------------------------------
 // Construction
@@ -84,8 +84,7 @@ OrderEvent Portfolio::generateOrder(const SignalEvent& signal) {
                          ? latestPrices_.at(sym) : 0.0;
 
     if (price <= 0.0) {
-        std::cerr << "[Portfolio] generateOrder: no price for " << sym
-                  << " — order suppressed\n";
+        spdlog::warn("Portfolio: no price for {} — order suppressed", sym);
         return OrderEvent(sym, OrderType::HOLD, 0, 0.0);
     }
 
@@ -111,14 +110,13 @@ OrderEvent Portfolio::generateOrder(const SignalEvent& signal) {
 
         // Check exposure caps — suppress order if already at limit
         if (currentSymWeight   >= maxSymbolExposure_) {
-            std::cout << "[Portfolio] " << sym
-                      << " symbol exposure cap reached ("
-                      << currentSymWeight * 100 << "%) — order suppressed\n";
+            spdlog::warn("Portfolio: {} symbol exposure cap reached ({:.1f}%) — order suppressed",
+                         sym, currentSymWeight * 100.0);
             return OrderEvent(sym, OrderType::HOLD, 0, price);
         }
         if (currentTotalWeight >= maxTotalExposure_) {
-            std::cout << "[Portfolio] total exposure cap reached ("
-                      << currentTotalWeight * 100 << "%) — order suppressed\n";
+            spdlog::warn("Portfolio: total exposure cap reached ({:.1f}%) — order suppressed",
+                         currentTotalWeight * 100.0);
             return OrderEvent(sym, OrderType::HOLD, 0, price);
         }
 
@@ -142,10 +140,8 @@ OrderEvent Portfolio::generateOrder(const SignalEvent& signal) {
         qty = std::max(1, static_cast<int>(std::floor(qty * discount)));
 
         if (discount < 1.0) {
-            std::cout << "[Portfolio] " << sym
-                      << " correlation discount applied: "
-                      << std::round((1.0 - discount) * 100) << "% size reduction"
-                      << "  final qty=" << qty << "\n";
+            spdlog::warn("Portfolio: {} correlation discount {:.0f}% applied — final qty={}",
+                         sym, (1.0 - discount) * 100.0, qty);
         }
 
         return OrderEvent(sym, OrderType::BUY, qty, price);
@@ -177,10 +173,12 @@ void Portfolio::updateFill(const FillEvent& fill) {
 
     if (fill.quantity > 0) {
         lastBuyPrice_ = fill.price;
-        trades_.push_back({ts, fill.symbol, fill.price, fill.quantity, "BUY", true});
+        trades_.push_back({ts, fill.symbol, fill.price, fill.quantity, "BUY", true, 0.0});
     } else {
-        const bool profit = fill.price > lastBuyPrice_;
-        trades_.push_back({ts, fill.symbol, fill.price, -fill.quantity, "SELL", profit});
+        const int    qty    = -fill.quantity;
+        const double pnl    = (fill.price - lastBuyPrice_) * qty - fill.commission;
+        const bool   profit = pnl > 0.0;
+        trades_.push_back({ts, fill.symbol, fill.price, qty, "SELL", profit, pnl});
     }
 }
 
@@ -290,12 +288,13 @@ void Portfolio::exportEquityCurve(const std::string& filename) const {
 
 void Portfolio::exportTrades(const std::string& filename) const {
     std::ofstream file(filename);
-    file << "timestamp,symbol,price,quantity,direction,profit\n";
+    file << "timestamp,symbol,price,quantity,direction,profit,pnl\n";
     for (const auto& t : trades_)
         file << t.timestamp << ","
              << t.symbol    << ","
              << t.price     << ","
              << t.quantity  << ","
              << t.direction << ","
-             << t.profit    << "\n";
+             << t.profit    << ","
+             << t.pnl       << "\n";
 }

@@ -17,6 +17,18 @@ if(ENABLE_COVERAGE)
     endif()
 endif()
 
+# ---------------------------------------------------------------------------
+# spdlog — header-only structured logging (fetched at configure time)
+# ---------------------------------------------------------------------------
+include(FetchContent)
+
+FetchContent_Declare(
+    spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG        v1.14.1
+)
+FetchContent_MakeAvailable(spdlog)
+
 include_directories(include)
 
 file(GLOB_RECURSE SOURCES "src/*.cpp")
@@ -25,6 +37,7 @@ file(GLOB_RECURSE SOURCES "src/*.cpp")
 # Production binary (no LibTorch required)
 # ---------------------------------------------------------------------------
 add_executable(backtest main.cpp ${SOURCES})
+target_link_libraries(backtest PRIVATE spdlog::spdlog_header_only)
 
 # ---------------------------------------------------------------------------
 # Tests — Google Test fetched at configure time, no manual install required.
@@ -54,7 +67,7 @@ if(BUILD_TESTING)
     # so all LibTorch code is compiled out — tests run without LibTorch.
     add_executable(backtester_tests ${TEST_SOURCES} ${SOURCES})
     target_include_directories(backtester_tests PRIVATE include)
-    target_link_libraries(backtester_tests GTest::gtest_main)
+    target_link_libraries(backtester_tests GTest::gtest_main spdlog::spdlog_header_only)
 
     include(GoogleTest)
     gtest_discover_tests(backtester_tests)
@@ -78,7 +91,7 @@ if(Torch_FOUND)
     add_executable(ml_backtest ml_main.cpp ${SOURCES})
     target_compile_definitions(ml_backtest PRIVATE ML_STRATEGY_ENABLED)
     target_include_directories(ml_backtest PRIVATE include)
-    target_link_libraries(ml_backtest ${TORCH_LIBRARIES})
+    target_link_libraries(ml_backtest ${TORCH_LIBRARIES} spdlog::spdlog_header_only)
 
     # Ensure C++17 ABI matches what LibTorch was built with
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

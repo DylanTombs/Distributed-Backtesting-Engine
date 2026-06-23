@@ -17,6 +17,7 @@
 
 #include "config/BacktestConfig.hpp"
 #include "engine/BacktestEngine.hpp"
+#include "logging/Logger.hpp"
 #include "market/FeatureCSVDataHandler.hpp"
 #include "market/MultiAssetDataHandler.hpp"
 #include "portfolio/PerformanceMetrics.hpp"
@@ -26,6 +27,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <spdlog/spdlog.h>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -77,6 +79,7 @@ private:
 // ---------------------------------------------------------------------------
 int main(int argc, char* argv[]) {
     if (argc < 2) {
+        // Logger not yet initialised — use stderr directly for CLI usage error
         std::cerr << "Usage: " << argv[0] << " <backtest_config.yaml>\n";
         return 1;
     }
@@ -84,33 +87,30 @@ int main(int argc, char* argv[]) {
     const std::string configPath = argv[1];
     const BacktestConfig config  = BacktestConfig::loadFromYAML(configPath);
 
+    // Initialise logger before any other log calls
+    initLogger(config.logFile, parseLogLevel(config.logLevel));
+
     if (config.symbols.empty()) {
-        std::cerr << "Error: no symbols defined in " << configPath
-                  << " (expected 'symbol' + 'feature_csv' keys)\n";
+        spdlog::error("No symbols defined in {} (expected 'symbol' + 'feature_csv' keys)",
+                      configPath);
         return 1;
     }
 
-    // ---- Print config summary ----------------------------------------------
-    std::cout << "=== ML Backtest ===\n"
-              << std::fixed << std::setprecision(4)
-              << "  Config:           " << configPath                    << "\n"
-              << "  Symbols:          " << config.symbols.size()         << "\n"
-              << "  Model:            " << config.modelPt                << "\n"
-              << "  FeatScaler:       " << config.featScalerCsv          << "\n"
-              << "  TgtScaler:        " << config.targScalerCsv          << "\n"
-              << "  Output dir:       " << config.outputDir              << "\n"
-              << "  Initial cash:    $" << config.initialCash            << "\n"
-              << "  Risk fraction:    " << config.riskFraction  * 100    << " %\n"
-              << "  Max sym exposure: " << config.maxSymbolExposure * 100<< " %\n"
-              << "  Max tot exposure: " << config.maxTotalExposure  * 100<< " %\n"
-              << "  Half spread:      " << config.halfSpread      * 100  << " %\n"
-              << "  Slippage:         " << config.slippageFraction * 100 << " %\n"
-              << "  Commission:      $" << config.commission              << "/trade\n"
-              << "  Corr window:      " << config.correlationWindow       << " days\n"
-              << "  Corr threshold:   " << config.correlationThreshold    << "\n";
+    // ---- Log config summary ------------------------------------------------
+    spdlog::info("=== ML Backtest ===");
+    spdlog::info("  Config:           {}", configPath);
+    spdlog::info("  Symbols:          {}", config.symbols.size());
+    spdlog::info("  Model:            {}", config.modelPt);
+    spdlog::info("  Initial cash:    ${:.2f}", config.initialCash);
+    spdlog::info("  Risk fraction:    {:.1f}%", config.riskFraction * 100.0);
+    spdlog::info("  Half spread:      {:.4f}%", config.halfSpread * 100.0);
+    spdlog::info("  Slippage:         {:.4f}%", config.slippageFraction * 100.0);
+    spdlog::info("  Commission:      ${:.2f}/trade", config.commission);
+    spdlog::info("  Buy threshold:    {:.3f}%", config.buyThreshold * 100.0);
+    spdlog::info("  Exit threshold:   {:.3f}%", config.exitThreshold * 100.0);
 
     for (const auto& sym : config.symbols)
-        std::cout << "    [" << sym.symbol << "] " << sym.featureCsv << "\n";
+        spdlog::info("  Symbol: {}  csv={}", sym.symbol, sym.featureCsv);
 
     try {
         // ---- Build multi-asset data handler --------------------------------
@@ -137,8 +137,8 @@ int main(int argc, char* argv[]) {
                 config.targScalerCsv,
                 /*seqLen=*/        30,
                 /*nFeatures=*/     nFeatures,
-                /*buyThreshold=*/  0.005,
-                /*exitThreshold=*/ 0.0);
+                config.buyThreshold,
+                config.exitThreshold);
             compositeStrategy.addSymbol(sym.symbol, std::move(strat));
         }
 
@@ -152,7 +152,7 @@ int main(int argc, char* argv[]) {
         auto& trades    = portfolio.getTrades();
 
         if (curve.empty()) {
-            std::cout << "\nNo market data processed.\n";
+            spdlog::warn("No market data processed — check feature CSV paths");
             return 0;
         }
 
@@ -164,12 +164,10 @@ int main(int argc, char* argv[]) {
         for (const auto& t : trades)
             if (t.profit) ++wins;
 
-        std::cout << std::fixed << std::setprecision(2)
-                  << "  Total trades     :  " << trades.size() << "\n";
+        spdlog::info("Total trades: {}", trades.size());
         if (!trades.empty())
-            std::cout << "  Win rate         :  "
-                      << (100.0 * wins / static_cast<double>(trades.size()))
-                      << " %\n";
+            spdlog::info("Win rate: {:.1f}%",
+                         100.0 * wins / static_cast<double>(trades.size()));
 
         // ---- Export --------------------------------------------------------
         const std::string outDir = config.outputDir.empty() ? "." : config.outputDir;
@@ -181,13 +179,10 @@ int main(int argc, char* argv[]) {
         portfolio.exportTrades(tradesOut);
         metrics.exportCSV(metricsOut);
 
-        std::cout << "\nSaved:\n"
-                  << "  " << equityOut  << "\n"
-                  << "  " << tradesOut  << "\n"
-                  << "  " << metricsOut << "\n";
+        spdlog::info("Saved: {}  {}  {}", equityOut, tradesOut, metricsOut);
 
     } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << "\n";
+        spdlog::error("Fatal: {}", e.what());
         return 1;
     }
 

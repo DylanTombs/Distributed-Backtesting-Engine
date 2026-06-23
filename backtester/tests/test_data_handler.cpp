@@ -317,3 +317,84 @@ TEST(BacktestConfigValidate, ValidationErrorMessageContainsFieldName) {
         EXPECT_NE(std::string(e.what()).find("initialCash"), std::string::npos);
     }
 }
+
+// ---------------------------------------------------------------------------
+// BacktestConfig — signal threshold validation (Phase 3)
+// ---------------------------------------------------------------------------
+
+TEST(BacktestConfigThresholds, DefaultThresholdsAreValid) {
+    auto cfg = validConfig();
+    // defaults: buyThreshold=0.005, exitThreshold=0.000 — both in [0, 0.1]
+    EXPECT_NO_THROW(cfg.validate());
+}
+
+TEST(BacktestConfigThresholds, ZeroBuyThresholdIsValid) {
+    auto cfg = validConfig();
+    cfg.buyThreshold = 0.0;
+    EXPECT_NO_THROW(cfg.validate());
+}
+
+TEST(BacktestConfigThresholds, MaxBuyThresholdIsValid) {
+    auto cfg = validConfig();
+    cfg.buyThreshold = 0.1;
+    EXPECT_NO_THROW(cfg.validate());
+}
+
+TEST(BacktestConfigThresholds, BuyThresholdAboveMaxThrows) {
+    auto cfg = validConfig();
+    cfg.buyThreshold = 0.2;
+    EXPECT_THROW(cfg.validate(), std::invalid_argument);
+}
+
+TEST(BacktestConfigThresholds, NegativeBuyThresholdThrows) {
+    auto cfg = validConfig();
+    cfg.buyThreshold = -0.001;
+    EXPECT_THROW(cfg.validate(), std::invalid_argument);
+}
+
+TEST(BacktestConfigThresholds, BuyThresholdErrorMessageContainsFieldName) {
+    auto cfg = validConfig();
+    cfg.buyThreshold = 0.5;
+    try {
+        cfg.validate();
+        FAIL() << "Expected std::invalid_argument";
+    } catch (const std::invalid_argument& e) {
+        EXPECT_NE(std::string(e.what()).find("buyThreshold"), std::string::npos);
+    }
+}
+
+TEST(BacktestConfigThresholds, ZeroExitThresholdIsValid) {
+    auto cfg = validConfig();
+    cfg.exitThreshold = 0.0;
+    EXPECT_NO_THROW(cfg.validate());
+}
+
+TEST(BacktestConfigThresholds, ExitThresholdAboveMaxThrows) {
+    auto cfg = validConfig();
+    cfg.exitThreshold = 0.15;
+    EXPECT_THROW(cfg.validate(), std::invalid_argument);
+}
+
+TEST(BacktestConfigThresholds, NegativeExitThresholdThrows) {
+    auto cfg = validConfig();
+    cfg.exitThreshold = -0.001;
+    EXPECT_THROW(cfg.validate(), std::invalid_argument);
+}
+
+TEST(BacktestConfigThresholds, ExitThresholdErrorMessageContainsFieldName) {
+    auto cfg = validConfig();
+    cfg.exitThreshold = 0.5;
+    try {
+        cfg.validate();
+        FAIL() << "Expected std::invalid_argument";
+    } catch (const std::invalid_argument& e) {
+        EXPECT_NE(std::string(e.what()).find("exitThreshold"), std::string::npos);
+    }
+}
+
+TEST(BacktestConfigThresholds, BothThresholdsAtBoundaryAreValid) {
+    auto cfg = validConfig();
+    cfg.buyThreshold  = 0.1;
+    cfg.exitThreshold = 0.1;
+    EXPECT_NO_THROW(cfg.validate());
+}

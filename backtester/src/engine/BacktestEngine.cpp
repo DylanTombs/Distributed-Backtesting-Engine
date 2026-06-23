@@ -4,7 +4,7 @@
 #include "../../include/events/FillEvent.hpp"
 #include "../../include/engine/BacktestEngine.hpp"
 
-#include <iostream>
+#include <spdlog/spdlog.h>
 
 BacktestEngine::BacktestEngine(Strategy&            strategy,
                                DataHandler&         dataHandler,
@@ -25,14 +25,18 @@ BacktestEngine::BacktestEngine(Strategy&            strategy,
 {}
 
 void BacktestEngine::run() {
+    spdlog::info("Backtest engine started");
+    int barCount = 0;
 
     while (true) {
 
         if (queue.empty())
             dataHandler.streamNext(queue);
 
-        if (queue.empty())
+        if (queue.empty()) {
+            spdlog::info("Backtest complete — {} bars processed", barCount);
             break;
+        }
 
         auto event = queue.pop();
 
@@ -42,6 +46,7 @@ void BacktestEngine::run() {
             auto marketEvent = std::static_pointer_cast<MarketEvent>(event);
             portfolio.updateMarket(*marketEvent);
             strategy.onMarketEvent(*marketEvent, queue);
+            ++barCount;
             break;
         }
 

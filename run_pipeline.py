@@ -2,10 +2,11 @@
 """
 run_pipeline.py — ML pipeline orchestrator.
 
-Executes three stages in order:
+Executes four stages in order:
   1. Feature engineering  (pipeline.py)       raw OHLCV  →  feature CSVs
   2. Model training       (Interface.py)      feature CSVs  →  checkpoint.pth
   3. Model export         (exportModel.py)    checkpoint.pth →  transformer.pt + scalers
+  4. Tearsheet            (tearsheet.py)      output CSVs  →  tearsheet_<ts>.html
 
 Each stage is a subprocess so failures are caught immediately and the
 exit code propagates to the calling shell / container orchestrator.
@@ -15,6 +16,7 @@ Usage:
   python run_pipeline.py --skip-train
   python run_pipeline.py --config models/best_config.yaml  # use Optuna best params
   python run_pipeline.py --seed 42
+  python run_pipeline.py --no-tearsheet                    # skip HTML tearsheet
 """
 
 import argparse
@@ -38,7 +40,8 @@ class PipelineConfig(BaseModel):
     feature_dir: str = "features"
     model_dir: str = "models"
     skip_train: bool = False
-    config_file: str = ""  # optional path to best_config.yaml from Optuna
+    no_tearsheet: bool = False       # skip HTML tearsheet generation
+    config_file: str = ""            # optional path to best_config.yaml from Optuna
 
     # Reproducibility
     seed: int = Field(default=42, ge=0)
@@ -112,7 +115,7 @@ def run(cmd: list, *, cwd: str | None = None) -> None:
 # CLI
 # ---------------------------------------------------------------------------
 
-def _parse_args():
+def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="TradingTransformer ML pipeline orchestrator",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -125,6 +128,8 @@ def _parse_args():
                    help="Directory to write exported model artefacts")
     p.add_argument("--skip-train", action="store_true",
                    help="Skip training and re-export an existing checkpoint")
+    p.add_argument("--no-tearsheet", action="store_true",
+                   help="Skip HTML tearsheet generation (useful in CI/headless environments)")
     p.add_argument("--config",
                    help="Path to YAML config (e.g. models/best_config.yaml)")
     p.add_argument("--seed", type=int, default=42)
@@ -143,31 +148,34 @@ def _parse_args():
     return p.parse_args()
 
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
 def main() -> None:
     cli = _parse_args()
 
-    # Collect explicit CLI overrides (skip Nones so YAML values aren't clobbered)
-    overrides = {
-        k: v for k, v in {
-            "data_dir": cli.data_dir,
-            "feature_dir": cli.feature_dir,
-            "model_dir": cli.model_dir,
-            "skip_train": cli.skip_train,
-            "seed": cli.seed,
-            "seq_len": cli.seq_len,
-            "label_len": cli.label_len,
-            "pred_len": cli.pred_len,
-            "d_model": cli.d_model,
-            "n_heads": cli.n_heads,
-            "e_layers": cli.e_layers,
-            "d_layers": cli.d_layers,
-            "d_ff": cli.d_ff,
-            "dropout": cli.dropout,
-            "batch_size": cli.batch_size,
-            "train_epochs": cli.epochs,
-            "learning_rate": cli.lr,
-        }.items() if v is not None
-    }
+    # Build overrides from non-None CLI args; YAML config fills the rest.
+    overrides = {k: v for k, v in {
+        "data_dir":      cli.data_dir,
+        "feature_dir":   cli.feature_dir,
+        "model_dir":     cli.model_dir,
+        "skip_train":    cli.skip_train,
+        "no_tearsheet":  cli.no_tearsheet,
+        "seed":          cli.seed,
+        "seq_len":       cli.seq_len,
+        "label_len":     cli.label_len,
+        "pred_len":      cli.pred_len,
+        "d_model":       cli.d_model,
+        "n_heads":       cli.n_heads,
+        "e_layers":      cli.e_layers,
+        "d_layers":      cli.d_layers,
+        "d_ff":          cli.d_ff,
+        "dropout":       cli.dropout,
+        "batch_size":    cli.batch_size,
+        "train_epochs":  cli.epochs,
+        "learning_rate": cli.lr,
+    }.items() if v is not None}
 
     try:
         if cli.config:
@@ -186,7 +194,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Stage 1 — Feature engineering
     # ------------------------------------------------------------------
-    print("\n[Stage 1/3] Feature engineering")
+    print("\n[Stage 1/4] Feature engineering")
     run([
         python,
         "research/features/pipeline.py",
@@ -195,12 +203,12 @@ def main() -> None:
     ])
 
     # ------------------------------------------------------------------
-    # Stage 2 — Training
+    # Stage 2 — Training (skippable when re-exporting an existing model)
     # ------------------------------------------------------------------
     if cfg.skip_train:
-        print("\n[Stage 2/3] Training skipped (--skip-train)")
+        print("\n[Stage 2/4] Training skipped (--skip-train)")
     else:
-        print("\n[Stage 2/3] Model training")
+        print("\n[Stage 2/4] Model training")
         run([
             python,
             "research/transformer/Interface.py",
@@ -224,7 +232,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Stage 3 — Export to LibTorch + scaler CSVs
     # ------------------------------------------------------------------
-    print("\n[Stage 3/3] Model export")
+    print("\n[Stage 3/4] Model export")
     run([python, "research/exportModel.py"])
 
     default_model_dir = Path("models")
@@ -241,6 +249,34 @@ def main() -> None:
     print("  transformer.pt")
     print("  feature_scaler.csv")
     print("  target_scaler.csv")
+
+    # ------------------------------------------------------------------
+    # Stage 4 — HTML tearsheet (optional; skipped with --no-tearsheet)
+    # Reads from output/ if backtest CSVs already exist there.
+    # ------------------------------------------------------------------
+    if not cfg.no_tearsheet:
+        output_dir = "output"
+        equity_csv = Path(output_dir) / "ml_equity.csv"
+        trades_csv = Path(output_dir) / "ml_trades.csv"
+        metrics_csv = Path(output_dir) / "ml_metrics.csv"
+
+        if equity_csv.exists() and trades_csv.exists() and metrics_csv.exists():
+            from datetime import datetime
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            tearsheet_path = Path(output_dir) / f"tearsheet_{ts}.html"
+            print("\n[Stage 4/4] Generating HTML tearsheet")
+            run([
+                python,
+                "research/analysis/tearsheet.py",
+                "--equity",  str(equity_csv),
+                "--trades",  str(trades_csv),
+                "--metrics", str(metrics_csv),
+                "--config",  "backtest_config.yaml",
+                "--output",  str(tearsheet_path),
+            ])
+        else:
+            print("\n[Stage 4/4] Tearsheet skipped — run ./ml_backtest first to "
+                  "produce output/ml_equity.csv, ml_trades.csv, ml_metrics.csv")
 
 
 if __name__ == "__main__":

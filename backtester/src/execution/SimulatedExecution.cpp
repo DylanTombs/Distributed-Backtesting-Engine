@@ -1,8 +1,7 @@
 #include "../../include/execution/SimulatedExecution.hpp"
 
 #include <cmath>
-#include <iomanip>
-#include <iostream>
+#include <spdlog/spdlog.h>
 
 SimulatedExecution::SimulatedExecution(double commission,
                                        double halfSpread,
@@ -36,16 +35,11 @@ FillEvent SimulatedExecution::executeOrder(const OrderEvent& order) {
     const double frictionCost =
         std::abs((fillPrice - rawPrice) * std::abs(quantity));
 
-    std::cout << std::fixed << std::setprecision(4)
-              << "[Execution]"
-              << "  " << (order.orderType == OrderType::BUY ? "BUY " : "SELL")
-              << "  symbol="  << order.symbol
-              << "  qty="     << std::abs(quantity)
-              << "  raw=$"    << rawPrice
-              << "  fill=$"   << fillPrice
-              << "  friction=$" << frictionCost
-              << "  commission=$" << commission_
-              << "\n";
+    spdlog::debug("Execution {} {}  symbol={}  qty={}  raw={:.4f}  fill={:.4f}"
+                  "  friction={:.4f}  commission={:.2f}",
+                  (order.orderType == OrderType::BUY ? "BUY " : "SELL"),
+                  order.symbol, std::abs(quantity),
+                  rawPrice, fillPrice, frictionCost, commission_);
 
     return FillEvent(order.symbol, quantity, fillPrice, commission_);
 }
