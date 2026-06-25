@@ -236,7 +236,7 @@ double Portfolio::correlationDiscount(const std::string& newSym) const {
         if (sym == newSym) continue;      // same symbol — not a correlation issue
         if (!returnHistory_.count(sym)) continue;
 
-        const double corr = pearsonCorr(newReturns, returnHistory_.at(sym));
+        const double corr = spearmanCorr(newReturns, returnHistory_.at(sym));
         maxAbsCorr = std::max(maxAbsCorr, std::abs(corr));
     }
 
@@ -248,6 +248,45 @@ double Portfolio::correlationDiscount(const std::string& newSym) const {
     const double maxRange = 1.0 - correlationThreshold_;
     const double reduction = 0.5 * (excess / maxRange);  // up to 50% reduction
     return 1.0 - reduction;
+}
+
+std::vector<double> Portfolio::rankVector(const std::vector<double>& v) {
+    const int n = static_cast<int>(v.size());
+    std::vector<int> idx(n);
+    std::iota(idx.begin(), idx.end(), 0);
+    std::sort(idx.begin(), idx.end(),
+              [&v](int a, int b) { return v[a] < v[b]; });
+
+    std::vector<double> ranks(n);
+    int i = 0;
+    while (i < n) {
+        int j = i;
+        while (j < n && v[idx[j]] == v[idx[i]]) ++j;
+        const double avgRank = (i + 1.0 + j) / 2.0;
+        for (int k = i; k < j; ++k)
+            ranks[idx[k]] = avgRank;
+        i = j;
+    }
+    return ranks;
+}
+
+double Portfolio::spearmanCorr(const std::deque<double>& x,
+                               const std::deque<double>& y) {
+    const int n = static_cast<int>(std::min(x.size(), y.size()));
+    if (n < 2) return 0.0;
+
+    const int xOff = static_cast<int>(x.size()) - n;
+    const int yOff = static_cast<int>(y.size()) - n;
+
+    const std::vector<double> xv(x.begin() + xOff, x.end());
+    const std::vector<double> yv(y.begin() + yOff, y.end());
+
+    const auto rx = rankVector(xv);
+    const auto ry = rankVector(yv);
+
+    const std::deque<double> rxd(rx.begin(), rx.end());
+    const std::deque<double> ryd(ry.begin(), ry.end());
+    return pearsonCorr(rxd, ryd);
 }
 
 double Portfolio::pearsonCorr(const std::deque<double>& x,

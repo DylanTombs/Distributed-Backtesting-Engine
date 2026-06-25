@@ -226,3 +226,85 @@ TEST_F(PortfolioTest, ExportTradesWritesQuantityColumn) {
     std::getline(file, header);
     EXPECT_EQ(header, "timestamp,symbol,price,quantity,direction,profit,pnl");
 }
+
+// ---------------------------------------------------------------------------
+// rankVector — Task 4.5
+// ---------------------------------------------------------------------------
+
+TEST(RankVector, DistinctValuesRankedCorrectly) {
+    const auto r = Portfolio::rankVector({3.0, 1.0, 2.0});
+    EXPECT_DOUBLE_EQ(r[0], 3.0);
+    EXPECT_DOUBLE_EQ(r[1], 1.0);
+    EXPECT_DOUBLE_EQ(r[2], 2.0);
+}
+
+TEST(RankVector, TiedValuesReceiveAverageRank) {
+    const auto r = Portfolio::rankVector({1.0, 1.0, 3.0});
+    EXPECT_DOUBLE_EQ(r[0], 1.5);
+    EXPECT_DOUBLE_EQ(r[1], 1.5);
+    EXPECT_DOUBLE_EQ(r[2], 3.0);
+}
+
+TEST(RankVector, AllTiedValuesReceiveMiddleRank) {
+    const auto r = Portfolio::rankVector({5.0, 5.0, 5.0});
+    EXPECT_DOUBLE_EQ(r[0], 2.0);
+    EXPECT_DOUBLE_EQ(r[1], 2.0);
+    EXPECT_DOUBLE_EQ(r[2], 2.0);
+}
+
+TEST(RankVector, SingleElementRankIsOne) {
+    const auto r = Portfolio::rankVector({42.0});
+    ASSERT_EQ(r.size(), 1u);
+    EXPECT_DOUBLE_EQ(r[0], 1.0);
+}
+
+TEST(RankVector, AlreadySortedAscendingRanksCorrectly) {
+    const auto r = Portfolio::rankVector({10.0, 20.0, 30.0});
+    EXPECT_DOUBLE_EQ(r[0], 1.0);
+    EXPECT_DOUBLE_EQ(r[1], 2.0);
+    EXPECT_DOUBLE_EQ(r[2], 3.0);
+}
+
+// ---------------------------------------------------------------------------
+// spearmanCorr — Task 4.5
+// ---------------------------------------------------------------------------
+
+TEST(SpearmanCorr, IdenticalSeriesReturnsOne) {
+    const std::deque<double> x = {1.0, 2.0, 3.0, 4.0, 5.0};
+    EXPECT_DOUBLE_EQ(Portfolio::spearmanCorr(x, x), 1.0);
+}
+
+TEST(SpearmanCorr, PerfectlyInverseSeriesReturnsMinusOne) {
+    const std::deque<double> x = {1.0, 2.0, 3.0, 4.0, 5.0};
+    const std::deque<double> y = {5.0, 4.0, 3.0, 2.0, 1.0};
+    EXPECT_DOUBLE_EQ(Portfolio::spearmanCorr(x, y), -1.0);
+}
+
+TEST(SpearmanCorr, OutlierDoesNotDistortMonotonicRelationship) {
+    // x has a large outlier; monotonic rank order between x and y is preserved
+    const std::deque<double> x = {1.0, 2.0, 3.0, 4.0, 100.0};
+    const std::deque<double> y = {2.0, 4.0, 6.0, 8.0, 10.0};
+    // Ranks of x: {1, 2, 3, 4, 5}; ranks of y: {1, 2, 3, 4, 5} → Spearman = 1.0
+    EXPECT_DOUBLE_EQ(Portfolio::spearmanCorr(x, y), 1.0);
+}
+
+TEST(SpearmanCorr, ResultIsAlwaysInBounds) {
+    const std::deque<double> x = {3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0, 6.0};
+    const std::deque<double> y = {7.0, 2.0, 8.0, 1.0, 8.0, 2.0, 8.0, 4.0};
+    const double r = Portfolio::spearmanCorr(x, y);
+    EXPECT_GE(r, -1.0);
+    EXPECT_LE(r,  1.0);
+}
+
+TEST(SpearmanCorr, SingleElementSeriesReturnsZero) {
+    const std::deque<double> x = {1.0};
+    const std::deque<double> y = {2.0};
+    EXPECT_DOUBLE_EQ(Portfolio::spearmanCorr(x, y), 0.0);
+}
+
+TEST(SpearmanCorr, UnequalLengthsUsesShortestSuffix) {
+    // x is longer; should use last 3 elements of x against all 3 of y
+    const std::deque<double> x = {99.0, 1.0, 2.0, 3.0};
+    const std::deque<double> y = {1.0,  2.0, 3.0};
+    EXPECT_DOUBLE_EQ(Portfolio::spearmanCorr(x, y), 1.0);
+}
