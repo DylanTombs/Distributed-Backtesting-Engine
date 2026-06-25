@@ -4,7 +4,9 @@
 #include "strategy/ScalerParams.hpp"
 
 #include <deque>
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // LibTorch is optional.  When cmake finds Torch, it defines
@@ -79,7 +81,13 @@ private:
     double runInference() const;
 
 #ifdef ML_STRATEGY_ENABLED
-    mutable torch::jit::script::Module model_;
+    // Shared across all instances that use the same model path — avoids
+    // loading a large TorchScript file once per symbol.
+    std::shared_ptr<torch::jit::script::Module> model_;
     bool modelLoaded_ = false;
+
+    // Process-wide cache: path → shared loaded module.
+    static std::unordered_map<std::string,
+                              std::shared_ptr<torch::jit::script::Module>> modelCache_;
 #endif
 };

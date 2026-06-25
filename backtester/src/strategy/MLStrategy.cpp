@@ -6,6 +6,12 @@
 #include <spdlog/spdlog.h>
 #include <stdexcept>
 
+#ifdef ML_STRATEGY_ENABLED
+std::unordered_map<std::string,
+                   std::shared_ptr<torch::jit::script::Module>>
+    MLStrategy::modelCache_;
+#endif
+
 // ---------------------------------------------------------------------------
 // Construction
 // ---------------------------------------------------------------------------
@@ -36,10 +42,20 @@ MLStrategy::MLStrategy(const std::string& modelPath,
 
 #ifdef ML_STRATEGY_ENABLED
     try {
-        model_       = torch::jit::load(modelPath);
-        modelLoaded_ = true;
-        model_.eval();
-        spdlog::info("MLStrategy: loaded model from {}", modelPath);
+        auto it = modelCache_.find(modelPath);
+        if (it != modelCache_.end()) {
+            model_       = it->second;
+            modelLoaded_ = true;
+            spdlog::debug("MLStrategy: reusing cached model from {}", modelPath);
+        } else {
+            auto m = std::make_shared<torch::jit::script::Module>(
+                torch::jit::load(modelPath));
+            m->eval();
+            modelCache_[modelPath] = m;
+            model_       = m;
+            modelLoaded_ = true;
+            spdlog::info("MLStrategy: loaded model from {}", modelPath);
+        }
     } catch (const c10::Error& e) {
         spdlog::error("MLStrategy: failed to load model: {}", e.what());
         modelLoaded_ = false;
@@ -151,7 +167,7 @@ double MLStrategy::runInference() const {
 
     // TransformerInferenceWrapper.forward(xEnc, xMarkEnc) → (1, predLen, 1)
     std::vector<torch::jit::IValue> inputs = {xEnc, xMark};
-    auto output = model_.forward(inputs).toTensor();
+    auto output = model_->forward(inputs).toTensor();
 
     // Take the first step of the prediction horizon
     float scaledPred = output[0][0][0].item<float>();
