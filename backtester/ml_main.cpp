@@ -21,6 +21,7 @@
 #include "market/FeatureCSVDataHandler.hpp"
 #include "market/MultiAssetDataHandler.hpp"
 #include "portfolio/PerformanceMetrics.hpp"
+#include "strategy/FeatureSchema.hpp"
 #include "strategy/MLStrategy.hpp"
 #include "strategy/Strategy.hpp"
 
@@ -111,6 +112,22 @@ int main(int argc, char* argv[]) {
 
     for (const auto& sym : config.symbols)
         spdlog::info("  Symbol: {}  csv={}", sym.symbol, sym.featureCsv);
+
+    // ---- Validate feature schema against runtime column list ---------------
+    // Fails fast if feature_schema.json and MODEL_FEATURE_COLUMNS diverge.
+    {
+        const std::string schemaPath = config.featureSchemaPath.empty()
+                                       ? "feature_schema.json"
+                                       : config.featureSchemaPath;
+        try {
+            FeatureSchema schema = FeatureSchema::loadFromJSON(schemaPath);
+            schema.validate(MODEL_FEATURE_COLUMNS);
+            spdlog::info("Feature schema validated: {} features OK", schema.features.size());
+        } catch (const std::exception& e) {
+            spdlog::error("Feature schema validation failed: {}", e.what());
+            return 1;
+        }
+    }
 
     try {
         // ---- Build multi-asset data handler --------------------------------

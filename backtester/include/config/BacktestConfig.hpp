@@ -64,6 +64,9 @@ struct BacktestConfig {
     bool   allowShort      = false; ///< Enable short selling (default: false — backward compatible)
     double shortMarginRate = 1.0;   ///< Fraction of position value required as margin (100%)
 
+    // ---- Feature schema (Task 4.3) ----------------------------------------
+    std::string featureSchemaPath; ///< Path to feature_schema.json; defaults to "feature_schema.json" when empty
+
     // ---- Logging -----------------------------------------------------------
     std::string logLevel = "info";           ///< trace|debug|info|warn|error|critical
     std::string logFile  = "output/backtest.log"; ///< Log file path (empty = console only)
@@ -159,6 +162,9 @@ struct BacktestConfig {
         // Short selling
         setBool  ("allow_short",       cfg.allowShort);
         setDouble("short_margin_rate", cfg.shortMarginRate);
+
+        // Feature schema
+        setStr("feature_schema_path", cfg.featureSchemaPath);
 
         // Logging
         setStr("log_level", cfg.logLevel);
