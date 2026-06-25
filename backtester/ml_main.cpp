@@ -138,7 +138,8 @@ int main(int argc, char* argv[]) {
                 /*seqLen=*/        30,
                 /*nFeatures=*/     nFeatures,
                 config.buyThreshold,
-                config.exitThreshold);
+                config.exitThreshold,
+                config.allowShort);
             compositeStrategy.addSymbol(sym.symbol, std::move(strat));
         }
 

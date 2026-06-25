@@ -15,7 +15,9 @@ Portfolio::Portfolio(double initialCash,
                      double maxSymbolExposure,
                      double maxTotalExposure,
                      int    correlationWindow,
-                     double correlationThreshold)
+                     double correlationThreshold,
+                     bool   allowShort,
+                     double shortMarginRate)
     : initialCash_(initialCash)
     , cash_(initialCash)
     , riskFraction_(riskFraction)
@@ -23,6 +25,8 @@ Portfolio::Portfolio(double initialCash,
     , maxTotalExposure_(maxTotalExposure)
     , correlationWindow_(correlationWindow)
     , correlationThreshold_(correlationThreshold)
+    , allowShort_(allowShort)
+    , shortMarginRate_(shortMarginRate)
 {}
 
 // ---------------------------------------------------------------------------
@@ -88,12 +92,31 @@ OrderEvent Portfolio::generateOrder(const SignalEvent& signal) {
         return OrderEvent(sym, OrderType::HOLD, 0, 0.0);
     }
 
-    // ---- EXIT — liquidate the full position --------------------------------
+    // ---- EXIT — close long OR cover short ----------------------------------
     if (signal.signalType == SignalType::EXIT) {
-        const int held = getPosition(sym);
-        if (held <= 0)
+        const int pos = getPosition(sym);
+        if (pos > 0)
+            return OrderEvent(sym, OrderType::SELL, pos, price);   // close long
+        if (pos < 0)
+            return OrderEvent(sym, OrderType::BUY, -pos, price);   // cover short
+        return OrderEvent(sym, OrderType::HOLD, 0, price);
+    }
+
+    // ---- SHORT — open short position (only when allowShort_ is true) -------
+    if (signal.signalType == SignalType::SHORT) {
+        if (!allowShort_) {
+            spdlog::warn("Portfolio: SHORT signal rejected — allow_short is disabled");
             return OrderEvent(sym, OrderType::HOLD, 0, price);
-        return OrderEvent(sym, OrderType::SELL, held, price);
+        }
+        if (getPosition(sym) != 0) {
+            spdlog::warn("Portfolio: SHORT signal ignored — {} already has a position", sym);
+            return OrderEvent(sym, OrderType::HOLD, 0, price);
+        }
+        const double equity  = getTotalEquity();
+        const int    baseQty = std::max(1, static_cast<int>(
+            std::floor((equity * riskFraction_) / price)));
+        spdlog::debug("Portfolio: SHORT {} qty={} @ {:.2f}", sym, baseQty, price);
+        return OrderEvent(sym, OrderType::SELL, baseQty, price);
     }
 
     // ---- LONG / BUY --------------------------------------------------------
@@ -147,15 +170,6 @@ OrderEvent Portfolio::generateOrder(const SignalEvent& signal) {
         return OrderEvent(sym, OrderType::BUY, qty, price);
     }
 
-    // ---- SHORT / SELL -------------------------------------------------------
-    if (signal.signalType == SignalType::SHORT ||
-        signal.signalType == SignalType::SELL) {
-        const double equity = getTotalEquity();
-        const int    qty    = std::max(1, static_cast<int>(
-            std::floor((equity * riskFraction_) / price)));
-        return OrderEvent(sym, OrderType::SELL, qty, price);
-    }
-
     return OrderEvent(sym, OrderType::HOLD, 0, price);
 }
 
@@ -164,21 +178,43 @@ OrderEvent Portfolio::generateOrder(const SignalEvent& signal) {
 // ---------------------------------------------------------------------------
 
 void Portfolio::updateFill(const FillEvent& fill) {
-    positions_[fill.symbol] += fill.quantity;
+    const std::string& sym = fill.symbol;
+    const std::string  ts  = latestTimestamps_.count(sym)
+                             ? latestTimestamps_.at(sym) : "";
+
+    const int prevPos = positions_.count(sym) ? positions_.at(sym) : 0;
+
+    // Apply cash and position change (works for all cases: positive adds to long,
+    // negative reduces long or opens/extends short).
+    positions_[sym] += fill.quantity;
     cash_ -= fill.quantity * fill.price;
     cash_ -= fill.commission;
 
-    const std::string ts = latestTimestamps_.count(fill.symbol)
-                           ? latestTimestamps_.at(fill.symbol) : "";
-
     if (fill.quantity > 0) {
-        lastBuyPrice_ = fill.price;
-        trades_.push_back({ts, fill.symbol, fill.price, fill.quantity, "BUY", true, 0.0});
+        if (prevPos < 0) {
+            // COVER: buying to close a short position
+            const int qty      = fill.quantity;
+            const double entry = shortEntryPrices_.count(sym)
+                                 ? shortEntryPrices_.at(sym) : fill.price;
+            const double pnl   = (entry - fill.price) * qty - fill.commission;
+            if (positions_[sym] == 0) shortEntryPrices_.erase(sym);
+            trades_.push_back({ts, sym, fill.price, qty, "COVER", pnl > 0.0, pnl});
+        } else {
+            // BUY: opening or adding to a long position
+            lastBuyPrice_ = fill.price;
+            trades_.push_back({ts, sym, fill.price, fill.quantity, "BUY", true, 0.0});
+        }
     } else {
-        const int    qty    = -fill.quantity;
-        const double pnl    = (fill.price - lastBuyPrice_) * qty - fill.commission;
-        const bool   profit = pnl > 0.0;
-        trades_.push_back({ts, fill.symbol, fill.price, qty, "SELL", profit, pnl});
+        const int qty = -fill.quantity;
+        if (prevPos > 0) {
+            // SELL: closing a long position
+            const double pnl  = (fill.price - lastBuyPrice_) * qty - fill.commission;
+            trades_.push_back({ts, sym, fill.price, qty, "SELL", pnl > 0.0, pnl});
+        } else {
+            // SHORT: opening a new short position (prevPos was 0)
+            shortEntryPrices_[sym] = fill.price;
+            trades_.push_back({ts, sym, fill.price, qty, "SHORT", true, 0.0});
+        }
     }
 }
 

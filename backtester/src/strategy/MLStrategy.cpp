@@ -16,11 +16,13 @@ MLStrategy::MLStrategy(const std::string& modelPath,
                        int    seqLen,
                        int    nFeatures,
                        double buyThreshold,
-                       double exitThreshold)
+                       double exitThreshold,
+                       bool   allowShort)
     : seqLen_(seqLen)
     , nFeatures_(nFeatures)
     , buyThreshold_(buyThreshold)
     , exitThreshold_(exitThreshold)
+    , allowShort_(allowShort)
 {
     featureScaler_ = ScalerParams::loadFromCSV(featureScalerPath);
     targetScaler_  = ScalerParams::loadFromCSV(targetScalerPath);
@@ -79,24 +81,41 @@ void MLStrategy::onMarketEvent(const MarketEvent& event, EventQueue& queue) {
     if (predictedClose < 0.0) return;   // inference not available
 
     const double currentClose = event.price;
+    const bool bullish = predictedClose > currentClose * (1.0 + buyThreshold_);
+    const bool bearish = predictedClose < currentClose * (1.0 - exitThreshold_);
 
-    // Entry: predicted meaningful upside
-    if (!hasPosition_ &&
-        predictedClose > currentClose * (1.0 + buyThreshold_)) {
-        queue.push(std::make_shared<SignalEvent>(event.symbol, SignalType::LONG));
-        hasPosition_ = true;
-        spdlog::debug("MLStrategy LONG  {} @ {}  price={:.4f}  pred={:.4f}",
-                      event.symbol, event.timestamp, currentClose, predictedClose);
-        return;
-    }
+    switch (positionDir_) {
+        case PositionDirection::FLAT:
+            if (bullish) {
+                queue.push(std::make_shared<SignalEvent>(event.symbol, SignalType::LONG));
+                positionDir_ = PositionDirection::LONG;
+                spdlog::debug("MLStrategy LONG  {} @ {}  price={:.4f}  pred={:.4f}",
+                              event.symbol, event.timestamp, currentClose, predictedClose);
+            } else if (bearish && allowShort_) {
+                queue.push(std::make_shared<SignalEvent>(event.symbol, SignalType::SHORT));
+                positionDir_ = PositionDirection::SHORT;
+                spdlog::debug("MLStrategy SHORT {} @ {}  price={:.4f}  pred={:.4f}",
+                              event.symbol, event.timestamp, currentClose, predictedClose);
+            }
+            break;
 
-    // Exit: any predicted decline (or beyond exitThreshold)
-    if (hasPosition_ &&
-        predictedClose < currentClose * (1.0 - exitThreshold_)) {
-        queue.push(std::make_shared<SignalEvent>(event.symbol, SignalType::EXIT));
-        hasPosition_ = false;
-        spdlog::debug("MLStrategy EXIT  {} @ {}  price={:.4f}  pred={:.4f}",
-                      event.symbol, event.timestamp, currentClose, predictedClose);
+        case PositionDirection::LONG:
+            if (bearish) {
+                queue.push(std::make_shared<SignalEvent>(event.symbol, SignalType::EXIT));
+                positionDir_ = PositionDirection::FLAT;
+                spdlog::debug("MLStrategy EXIT  {} @ {}  price={:.4f}  pred={:.4f}",
+                              event.symbol, event.timestamp, currentClose, predictedClose);
+            }
+            break;
+
+        case PositionDirection::SHORT:
+            if (bullish) {
+                queue.push(std::make_shared<SignalEvent>(event.symbol, SignalType::EXIT));
+                positionDir_ = PositionDirection::FLAT;
+                spdlog::debug("MLStrategy COVER {} @ {}  price={:.4f}  pred={:.4f}",
+                              event.symbol, event.timestamp, currentClose, predictedClose);
+            }
+            break;
     }
 }
 

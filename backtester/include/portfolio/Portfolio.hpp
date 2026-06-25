@@ -44,11 +44,13 @@ struct EquityPoint {
 class Portfolio {
 public:
     explicit Portfolio(double initialCash,
-                       double riskFraction      = 0.10,
-                       double maxSymbolExposure = 0.20,
-                       double maxTotalExposure  = 0.80,
-                       int    correlationWindow = 60,
-                       double correlationThreshold = 0.7);
+                       double riskFraction         = 0.10,
+                       double maxSymbolExposure    = 0.20,
+                       double maxTotalExposure     = 0.80,
+                       int    correlationWindow    = 60,
+                       double correlationThreshold = 0.7,
+                       bool   allowShort           = false,
+                       double shortMarginRate      = 1.0);
 
     // ---- Trade record -------------------------------------------------------
     struct Trade {
@@ -121,6 +123,12 @@ private:
     std::unordered_map<std::string, double>             prevPrice_;
 
     double lastBuyPrice_ = 0.0;
+
+    // ---- Short selling state ------------------------------------------------
+    bool   allowShort_      = false;
+    double shortMarginRate_ = 1.0;
+    /// Price received when each symbol was shorted (for cover P&L calculation).
+    std::unordered_map<std::string, double> shortEntryPrices_;
 
     std::vector<EquityPoint> equityCurve_;
     std::vector<Trade>       trades_;

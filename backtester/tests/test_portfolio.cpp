@@ -181,11 +181,13 @@ TEST_F(PortfolioTest, ExitSignalFullyClosesOpenPosition) {
     EXPECT_DOUBLE_EQ(order.price, 150.0);
 }
 
-TEST_F(PortfolioTest, ShortSignalGeneratesSellOrder) {
+TEST_F(PortfolioTest, ShortSignalRejectedWhenAllowShortFalse) {
+    // Default Portfolio has allowShort=false — SHORT signal should produce HOLD
     portfolio.updateMarket(MarketEvent("AAPL", 150.0, "2024-01-01"));
     SignalEvent signal("AAPL", SignalType::SHORT);
     OrderEvent  order = portfolio.generateOrder(signal);
-    EXPECT_EQ(order.orderType, OrderType::SELL);
+    EXPECT_EQ(order.orderType, OrderType::HOLD);
+    EXPECT_EQ(order.quantity,  0);
 }
 
 // ---- CSV export -------------------------------------------------------------
@@ -307,4 +309,75 @@ TEST(SpearmanCorr, UnequalLengthsUsesShortestSuffix) {
     const std::deque<double> x = {99.0, 1.0, 2.0, 3.0};
     const std::deque<double> y = {1.0,  2.0, 3.0};
     EXPECT_DOUBLE_EQ(Portfolio::spearmanCorr(x, y), 1.0);
+}
+
+// ---------------------------------------------------------------------------
+// Short selling — Task 4.1
+// ---------------------------------------------------------------------------
+
+class ShortPortfolioTest : public ::testing::Test {
+protected:
+    static constexpr double CASH = 10'000.0;
+    // allowShort=true, shortMarginRate=1.0
+    Portfolio portfolio{CASH, 0.10, 0.20, 0.80, 60, 0.7, /*allowShort=*/true, /*marginRate=*/1.0};
+};
+
+TEST_F(ShortPortfolioTest, ShortSignalGeneratesSellOrder) {
+    portfolio.updateMarket(MarketEvent("AAPL", 100.0, "2024-01-01"));
+    SignalEvent signal("AAPL", SignalType::SHORT);
+    OrderEvent  order = portfolio.generateOrder(signal);
+    EXPECT_EQ(order.orderType, OrderType::SELL);
+    EXPECT_GT(order.quantity,  0);
+    EXPECT_DOUBLE_EQ(order.price, 100.0);
+}
+
+TEST_F(ShortPortfolioTest, ShortFillIncreasesRawCashAndNegatesPosition) {
+    // Selling 10 shares short at $100 → cash += 10*100 = +1000
+    portfolio.updateMarket(MarketEvent("AAPL", 100.0, "2024-01-01"));
+    portfolio.updateFill(FillEvent("AAPL", -10, 100.0, 0.0));
+    EXPECT_DOUBLE_EQ(portfolio.getCash(), CASH + 1000.0);
+    EXPECT_EQ(portfolio.getPosition("AAPL"), -10);
+}
+
+TEST_F(ShortPortfolioTest, ShortTradeRecordedWithShortDirection) {
+    portfolio.updateFill(FillEvent("AAPL", -5, 100.0, 0.0));
+    ASSERT_EQ(portfolio.getTrades().size(), 1u);
+    EXPECT_EQ(portfolio.getTrades()[0].direction, "SHORT");
+    EXPECT_EQ(portfolio.getTrades()[0].quantity,  5);
+}
+
+TEST_F(ShortPortfolioTest, CoverFillClearsShortPositionAndRecordsPnl) {
+    // Short 5 @ 100, cover @ 90 → profit = (100-90)*5 = 50
+    portfolio.updateFill(FillEvent("AAPL", -5, 100.0, 0.0));
+    portfolio.updateFill(FillEvent("AAPL",  5,  90.0, 0.0));
+
+    EXPECT_EQ(portfolio.getPosition("AAPL"), 0);
+    const auto& trades = portfolio.getTrades();
+    ASSERT_EQ(trades.size(), 2u);
+    EXPECT_EQ(trades[1].direction, "COVER");
+    EXPECT_DOUBLE_EQ(trades[1].pnl, 50.0);
+    EXPECT_TRUE(trades[1].profit);
+}
+
+TEST_F(ShortPortfolioTest, CoverAtHigherPriceIsALoss) {
+    // Short 5 @ 100, cover @ 110 → loss = (100-110)*5 = -50
+    portfolio.updateFill(FillEvent("AAPL", -5, 100.0, 0.0));
+    portfolio.updateFill(FillEvent("AAPL",  5, 110.0, 0.0));
+
+    const auto& trades = portfolio.getTrades();
+    ASSERT_EQ(trades.size(), 2u);
+    EXPECT_DOUBLE_EQ(trades[1].pnl, -50.0);
+    EXPECT_FALSE(trades[1].profit);
+}
+
+TEST_F(ShortPortfolioTest, ExitSignalOnShortPositionGeneratesBuyOrder) {
+    // Open a short, then EXIT → should BUY to cover
+    portfolio.updateMarket(MarketEvent("AAPL", 100.0, "2024-01-01"));
+    portfolio.updateFill(FillEvent("AAPL", -5, 100.0, 0.0));
+
+    SignalEvent exitSig("AAPL", SignalType::EXIT);
+    OrderEvent  order = portfolio.generateOrder(exitSig);
+
+    EXPECT_EQ(order.orderType, OrderType::BUY);
+    EXPECT_EQ(order.quantity,  5);
 }
