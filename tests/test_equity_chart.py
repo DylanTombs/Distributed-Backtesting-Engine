@@ -4,13 +4,16 @@ import os
 import sys
 import pytest
 import pandas as pd
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from research.dashboard.io.run_store import RunMeta, RunArtifacts
 from research.dashboard.components.equity_chart import equity_comparison_chart, single_equity_chart
 from research.dashboard.components.metrics_table import metrics_summary_table, metric_delta_table
-from research.dashboard.components.run_selector import run_selector_options, run_id_from_label
+from research.dashboard.components.run_selector import (
+    run_selector_options, run_id_from_label, render_run_selector,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -151,3 +154,72 @@ def test_run_id_from_label_extracts_run_id():
     runs = [RunMeta("20260401_143022", ["AAPL"], {"sharpe_ratio": 1.23})]
     label = run_selector_options(runs)[0]
     assert run_id_from_label(label) == "20260401_143022"
+
+
+# render_run_selector — tested with mocked streamlit
+
+def _make_st_mock(selected_labels=None, selected_label=None):
+    st = MagicMock()
+    st.sidebar.multiselect.return_value = selected_labels or []
+    st.sidebar.selectbox.return_value = selected_label or ""
+    return st
+
+
+def test_render_run_selector_single_returns_matching_run():
+    runs = [
+        RunMeta("20260401_143022", ["AAPL"], {"sharpe_ratio": 1.23}),
+        RunMeta("20260402_091155", ["MSFT"], {"sharpe_ratio": 0.87}),
+    ]
+    label = run_selector_options(runs)[0]
+    st_mock = _make_st_mock(selected_label=label)
+
+    with patch.dict(sys.modules, {"streamlit": st_mock}):
+        result = render_run_selector(runs, multi=False)
+
+    assert result is not None
+    assert result.run_id == "20260401_143022"
+
+
+def test_render_run_selector_multi_returns_list():
+    runs = [
+        RunMeta("20260401_143022", ["AAPL"], {"sharpe_ratio": 1.23}),
+        RunMeta("20260402_091155", ["MSFT"], {"sharpe_ratio": 0.87}),
+    ]
+    labels = run_selector_options(runs)
+    st_mock = _make_st_mock(selected_labels=labels[:1])
+
+    with patch.dict(sys.modules, {"streamlit": st_mock}):
+        result = render_run_selector(runs, multi=True, max_select=4)
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert result[0].run_id == "20260401_143022"
+
+
+def test_render_run_selector_empty_runs_returns_none():
+    st_mock = _make_st_mock()
+
+    with patch.dict(sys.modules, {"streamlit": st_mock}):
+        result = render_run_selector([], multi=False)
+
+    assert result is None
+    st_mock.sidebar.warning.assert_called_once()
+
+
+def test_render_run_selector_empty_runs_multi_returns_empty_list():
+    st_mock = _make_st_mock()
+
+    with patch.dict(sys.modules, {"streamlit": st_mock}):
+        result = render_run_selector([], multi=True)
+
+    assert result == []
+
+
+def test_render_run_selector_unknown_label_returns_none():
+    runs = [RunMeta("20260401_143022", ["AAPL"], {})]
+    st_mock = _make_st_mock(selected_label="unknown_id  [—]")
+
+    with patch.dict(sys.modules, {"streamlit": st_mock}):
+        result = render_run_selector(runs, multi=False)
+
+    assert result is None
