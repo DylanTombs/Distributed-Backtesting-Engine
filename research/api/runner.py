@@ -1,26 +1,22 @@
-"""Backtest runner — invokes the compiled C++ backtester for a date window.
+"""Backtest runner — calls the compiled ml_backtest binary for a date window.
 
-Architecture:
-  1. Read the user's existing backtest_config.yaml (strategy stays fixed — same
-     model, thresholds, risk params the user has already configured).
-  2. Identify which requested tickers have feature CSVs on disk; fall back to
-     whatever is configured when none match.
-  3. For each symbol, write a *temp filtered CSV* containing only rows whose
-     timestamp falls within [date_start, date_end].
-  4. Write a *temp config YAML* pointing at those filtered CSVs (all other
-     strategy parameters copied from the base config unchanged).
-  5. Invoke ``backtester/ml_backtest <temp_config.yaml>`` directly — no
-     pipeline re-run, no model re-export, no feature re-engineering.
-  6. Read results from the output directory, archive the run, clean up temps.
+Binary interface (positional args):
+  ml_backtest <feature_csv> <symbol> [model_pt] [feature_scaler_csv] [target_scaler_csv]
 
-An LRU cache keyed on (tickers, date_start, date_end) makes repeated clicks
-on the same page instant.
+The binary writes ml_equity.csv and ml_trades.csv to its CWD. We run it
+from PROJECT_ROOT so the default model/scaler paths resolve correctly.
+
+For each backtest request:
+  1. Filter the symbol's feature CSV to the requested date window.
+  2. Run the binary against that filtered CSV.
+  3. Read equity + trades; compute metrics in Python.
+  4. Archive and return.
 """
 from __future__ import annotations
 
 import csv
 import logging
-import os
+import math
 import shutil
 import subprocess
 import tempfile
@@ -30,19 +26,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import pandas as pd
-import yaml
+import pandas as pd  # noqa: E402
 
 from .schemas import BacktestResponse, EquityPoint
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT   = Path(__file__).resolve().parents[2]
-BASE_CONFIG    = PROJECT_ROOT / "backtest_config.yaml"
-BINARY         = PROJECT_ROOT / "backtester" / "ml_backtest"
-DATA_DIR       = PROJECT_ROOT / "backtester" / "data"
-MODEL_DIR      = PROJECT_ROOT / "models"
-OUTPUT_DIR     = PROJECT_ROOT / "output"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+BINARY        = PROJECT_ROOT / "backtester" / "ml_backtest"
+DATA_DIR      = PROJECT_ROOT / "backtester" / "data"
+MODEL_DIR     = PROJECT_ROOT / "models"
+OUTPUT_DIR    = PROJECT_ROOT / "output"
+LOOKBACK_BARS = 60   # bars of history prepended so model has seq_len context
 
 _LRU_MAX = 20
 
@@ -84,7 +79,6 @@ def run_backtest(
     tickers: list[str],
     date_start: str,
     date_end: str,
-    skip_train: bool = True,
 ) -> BacktestResponse:
     cache_key = f"{','.join(sorted(tickers))}|{date_start}|{date_end}"
     cached = _cache.get(cache_key)
@@ -102,36 +96,22 @@ def run_backtest(
 # ---------------------------------------------------------------------------
 
 def _execute(tickers: list[str], date_start: str, date_end: str) -> BacktestResponse:
-    base_cfg = _load_base_config()
-
-    # Resolve which symbols actually have feature data on disk
-    available = _find_available_symbols(tickers, base_cfg)
-    if not available:
+    if not BINARY.exists():
         raise RuntimeError(
-            f"No feature CSVs found for {tickers}. "
-            f"Available data is in {DATA_DIR}/ — run feature engineering first."
+            f"ml_backtest binary not found at {BINARY}. "
+            "Build it with Docker or cmake in backtester/."
         )
+
+    # Find the best available symbol with a feature CSV on disk
+    symbol, src_csv = _resolve_symbol(tickers)
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="tt_backtest_"))
     try:
-        # Filter each symbol's CSV to the requested date window
-        filtered = _filter_csvs(available, date_start, date_end, tmp_dir)
-        if not filtered:
-            raise RuntimeError(
-                f"No data in [{date_start} → {date_end}] for {list(available.keys())}. "
-                "Try a wider date range."
-            )
+        filtered_csv = _filter_csv(src_csv, symbol, date_start, date_end, tmp_dir)
 
-        # Write a temp config pointing at the filtered CSVs
-        tmp_cfg_path = tmp_dir / "backtest_config.yaml"
-        _write_temp_config(base_cfg, filtered, tmp_cfg_path)
-
-        # Run the binary
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        _run_binary(tmp_cfg_path)
-
-        # Archive and return
-        return _archive_and_read(run_id)
+        _run_binary(filtered_csv, symbol)
+        return _archive_and_read(run_id, symbol, date_start, date_end)
 
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -141,204 +121,139 @@ def _execute(tickers: list[str], date_start: str, date_end: str) -> BacktestResp
 # Symbol resolution
 # ---------------------------------------------------------------------------
 
-def _find_available_symbols(
-    requested: list[str],
-    base_cfg: dict,
-) -> dict[str, Path]:
-    """Return {symbol: feature_csv_path} for symbols that have data on disk.
+def _resolve_symbol(tickers: list[str]) -> tuple[str, Path]:
+    """Return (symbol, feature_csv_path) for the first ticker that has data.
 
-    Priority:
-      1. Requested tickers that have a matching *_features.csv in DATA_DIR.
-      2. Fall back to whatever the base config already has configured, so the
-         user's default backtest still runs when none of the page tickers match.
+    Falls back to whatever is in DATA_DIR when none of the requested tickers
+    have a matching CSV.
     """
-    found: dict[str, Path] = {}
-
-    for ticker in requested:
+    for ticker in tickers:
         candidate = DATA_DIR / f"{ticker}_features.csv"
         if candidate.exists():
-            found[ticker] = candidate
+            logger.info("Using feature CSV for requested ticker %s", ticker)
+            return ticker, candidate
 
-    if found:
-        return found
+    # Fallback: use whatever features file exists
+    csvs = sorted(DATA_DIR.glob("*_features.csv"))
+    if csvs:
+        symbol = csvs[0].stem.replace("_features", "")
+        logger.info(
+            "None of %s have feature CSVs — falling back to %s", tickers, symbol
+        )
+        return symbol, csvs[0]
 
-    # Nothing matched — use whatever is already in backtest_config.yaml
-    logger.info(
-        "No feature CSVs for %s; falling back to base-config symbols", requested
+    raise RuntimeError(
+        f"No feature CSVs found in {DATA_DIR}. "
+        "Run feature engineering first: python research/features/pipeline.py"
     )
-    symbol = base_cfg.get("symbol", "")
-    feature_csv = base_cfg.get("feature_csv", "")
-    if symbol and feature_csv:
-        p = Path(feature_csv)
-        if not p.is_absolute():
-            p = PROJECT_ROOT / p
-        # Also handle Docker paths like /backtester/data/...
-        if not p.exists():
-            local_guess = DATA_DIR / p.name
-            if local_guess.exists():
-                p = local_guess
-        if p.exists():
-            found[symbol] = p
-
-    # Additional numbered symbols
-    for i in range(1, 20):
-        s = base_cfg.get(f"symbol_{i}", "")
-        f = base_cfg.get(f"feature_csv_{i}", "")
-        if s and f:
-            p = Path(f)
-            if not p.is_absolute():
-                p = PROJECT_ROOT / p
-            if not p.exists():
-                local_guess = DATA_DIR / p.name
-                if local_guess.exists():
-                    p = local_guess
-            if p.exists():
-                found[s] = p
-
-    return found
 
 
 # ---------------------------------------------------------------------------
 # Date filtering
 # ---------------------------------------------------------------------------
 
-def _filter_csvs(
-    symbols: dict[str, Path],
-    date_start: str,
-    date_end: str,
-    out_dir: Path,
-) -> dict[str, Path]:
-    """Write date-filtered copies of each feature CSV; return {symbol: path}."""
-    filtered: dict[str, Path] = {}
+def _filter_csv(
+    src: Path, symbol: str, date_start: str, date_end: str, out_dir: Path
+) -> Path:
+    df = pd.read_csv(src)
 
-    for symbol, src_path in symbols.items():
-        df = pd.read_csv(src_path)
+    date_col = "timestamp" if "timestamp" in df.columns else "date"
+    if date_col not in df.columns:
+        raise RuntimeError(f"No timestamp/date column in {src}")
 
-        # Normalise date column (may be 'timestamp' or 'date')
-        date_col = "timestamp" if "timestamp" in df.columns else "date"
-        if date_col not in df.columns:
-            logger.warning("No date column in %s — skipping", src_path)
-            continue
+    df[date_col] = pd.to_datetime(df[date_col])
+    df = df.sort_values(date_col).reset_index(drop=True)
 
-        df[date_col] = pd.to_datetime(df[date_col])
-        mask = (df[date_col] >= date_start) & (df[date_col] <= date_end)
-        slice_df = df[mask].copy()
+    window_mask = (df[date_col] >= date_start) & (df[date_col] <= date_end)
+    window_rows = df[window_mask]
 
-        if slice_df.empty:
-            logger.warning(
-                "%s has no rows in [%s, %s]", symbol, date_start, date_end
-            )
-            continue
-
-        out_path = out_dir / f"{symbol}_features.csv"
-        slice_df.to_csv(out_path, index=False)
-        logger.info(
-            "Filtered %s: %d rows → %d rows (%s–%s)",
-            symbol, len(df), len(slice_df), date_start, date_end,
+    if window_rows.empty:
+        raise RuntimeError(
+            f"No data for {symbol} in [{date_start} → {date_end}]. "
+            f"The feature CSV covers "
+            f"{df[date_col].min().date()} – {df[date_col].max().date()}."
         )
-        filtered[symbol] = out_path
 
-    return filtered
+    # Prepend LOOKBACK_BARS of history so the model has seq_len context
+    first_idx = window_rows.index[0]
+    lookback_start = max(0, first_idx - LOOKBACK_BARS)
+    sliced = df.iloc[lookback_start:window_rows.index[-1] + 1].copy()
 
+    # Binary expects 'date' column name
+    if date_col == "timestamp":
+        sliced = sliced.rename(columns={"timestamp": "date"})
 
-# ---------------------------------------------------------------------------
-# Temp config
-# ---------------------------------------------------------------------------
-
-def _write_temp_config(
-    base_cfg: dict,
-    filtered: dict[str, Path],
-    out_path: Path,
-) -> None:
-    """Clone the base config, replace symbol/feature_csv entries with filtered
-    paths, and write to out_path."""
-    cfg = {k: v for k, v in base_cfg.items()}
-
-    # Clear old symbol entries
-    keys_to_remove = ["symbol", "feature_csv"]
-    for i in range(1, 20):
-        keys_to_remove += [f"symbol_{i}", f"feature_csv_{i}"]
-    for k in keys_to_remove:
-        cfg.pop(k, None)
-
-    # Replace with filtered symbols
-    symbols = list(filtered.items())
-    cfg["symbol"]      = symbols[0][0]
-    cfg["feature_csv"] = str(symbols[0][1])
-    for i, (sym, path) in enumerate(symbols[1:], start=1):
-        cfg[f"symbol_{i}"]      = sym
-        cfg[f"feature_csv_{i}"] = str(path)
-
-    # Fix model/scaler paths — resolve Docker-style /models/... to local paths
-    for key, local in [
-        ("model_pt",           MODEL_DIR / "transformer.pt"),
-        ("feature_scaler_csv", MODEL_DIR / "feature_scaler.csv"),
-        ("target_scaler_csv",  MODEL_DIR / "target_scaler.csv"),
-    ]:
-        if key in cfg:
-            p = Path(cfg[key])
-            if not p.exists() and local.exists():
-                cfg[key] = str(local)
-
-    cfg["output_dir"] = str(OUTPUT_DIR)
-
-    with open(out_path, "w") as f:
-        yaml.dump(cfg, f, default_flow_style=False)
+    out = out_dir / f"{symbol}_features.csv"
+    sliced.to_csv(out, index=False)
+    logger.info("Filtered %s: %d rows in window", symbol, len(sliced))
+    return out
 
 
 # ---------------------------------------------------------------------------
 # Binary invocation
 # ---------------------------------------------------------------------------
 
-def _run_binary(config_path: Path) -> None:
-    if not BINARY.exists():
-        raise RuntimeError(
-            f"ml_backtest binary not found at {BINARY}. "
-            "Build it first: cd backtester && mkdir -p build && "
-            "cd build && cmake .. && make"
-        )
+def _run_binary(feature_csv: Path, symbol: str) -> None:
+    model_pt      = MODEL_DIR / "transformer.pt"
+    feat_scaler   = MODEL_DIR / "feature_scaler.csv"
+    target_scaler = MODEL_DIR / "target_scaler.csv"
 
-    cmd = [str(BINARY), str(config_path)]
+    cmd = [
+        str(BINARY),
+        str(feature_csv),
+        symbol,
+        str(model_pt),
+        str(feat_scaler),
+        str(target_scaler),
+    ]
+
     logger.info("Running: %s", " ".join(cmd))
     t0 = time.monotonic()
 
-    proc = subprocess.run(cmd, cwd=str(PROJECT_ROOT), capture_output=True, text=True)
+    proc = subprocess.run(
+        cmd,
+        cwd=str(PROJECT_ROOT),   # binary writes ml_equity.csv here
+        capture_output=True,
+        text=True,
+    )
 
-    logger.info("Binary exited in %.1f s", time.monotonic() - t0)
+    logger.info("Binary exited %.1f s  rc=%d", time.monotonic() - t0, proc.returncode)
     if proc.stdout:
-        logger.debug("stdout: %s", proc.stdout[-1000:])
+        logger.info("stdout: %s", proc.stdout[-500:])
     if proc.stderr:
-        logger.debug("stderr: %s", proc.stderr[-1000:])
+        logger.debug("stderr: %s", proc.stderr[-500:])
 
     if proc.returncode != 0:
         raise RuntimeError(
-            f"ml_backtest failed (exit {proc.returncode}): {proc.stderr[-500:]}"
+            f"ml_backtest failed (exit {proc.returncode}): "
+            f"{proc.stderr[-400:] or proc.stdout[-400:]}"
         )
 
 
 # ---------------------------------------------------------------------------
-# Archive and read results
+# Archive + read
 # ---------------------------------------------------------------------------
 
-def _archive_and_read(run_id: str) -> BacktestResponse:
+def _archive_and_read(
+    run_id: str, symbol: str, date_start: str, date_end: str
+) -> BacktestResponse:
+    # Binary writes to PROJECT_ROOT (its CWD)
+    equity_src = PROJECT_ROOT / "ml_equity.csv"
+    trades_src = PROJECT_ROOT / "ml_trades.csv"
+
     run_dir = OUTPUT_DIR / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    archived: list[str] = []
-    for name in ("ml_equity.csv", "ml_trades.csv", "ml_metrics.csv"):
-        src = OUTPUT_DIR / name
+    for src, name in [(equity_src, "ml_equity.csv"), (trades_src, "ml_trades.csv")]:
         if src.exists():
             shutil.copy2(src, run_dir / name)
-            archived.append(name)
 
-    if not archived:
-        raise RuntimeError(
-            "Backtest produced no output files — check logs for backtester errors."
-        )
+    equity  = _read_equity(run_dir / "ml_equity.csv", date_start, date_end)
+    trades  = _read_trades(run_dir / "ml_trades.csv", date_start, date_end)
+    metrics = _compute_metrics(equity, trades, symbol, date_start, date_end)
 
-    equity  = _read_equity(run_dir / "ml_equity.csv")
-    trades  = _read_trades(run_dir / "ml_trades.csv")
-    metrics = _read_metrics(run_dir / "ml_metrics.csv")
+    # Persist computed metrics alongside the run
+    _write_metrics_csv(metrics, run_dir / "ml_metrics.csv")
 
     return BacktestResponse(
         run_id=run_id,
@@ -350,16 +265,93 @@ def _archive_and_read(run_id: str) -> BacktestResponse:
 
 
 # ---------------------------------------------------------------------------
+# Metrics computation (binary doesn't produce a metrics file)
+# ---------------------------------------------------------------------------
+
+def _compute_metrics(
+    equity: list[EquityPoint],
+    trades: list[dict],
+    symbol: str,
+    date_start: str,
+    date_end: str,
+) -> dict:
+    if not equity:
+        return {}
+
+    values   = [p.equity for p in equity]
+    initial  = values[0]
+    final    = values[-1]
+    days     = len(values)
+
+    total_return_pct = (final - initial) / initial * 100
+
+    # Max drawdown
+    peak = values[0]
+    max_dd = 0.0
+    for v in values:
+        if v > peak:
+            peak = v
+        dd = (peak - v) / peak * 100
+        if dd > max_dd:
+            max_dd = dd
+
+    # Sharpe (annualised, assumes daily bars, rf=0)
+    if len(values) > 1:
+        rets = [(values[i] - values[i - 1]) / values[i - 1] for i in range(1, len(values))]
+        mean_r = sum(rets) / len(rets)
+        var_r  = sum((r - mean_r) ** 2 for r in rets) / len(rets)
+        std_r  = math.sqrt(var_r) if var_r > 0 else 0.0
+        sharpe = (mean_r / std_r * math.sqrt(252)) if std_r > 0 else 0.0
+    else:
+        sharpe = 0.0
+
+    # Win rate from trades (SELL/COVER directions are the closing legs)
+    closing = [
+        t for t in trades
+        if t.get("direction", "").upper() in ("SELL", "COVER", "SHORT")
+    ] or trades
+    wins = sum(1 for t in closing if _coerce(t.get("profit", 0)) > 0)
+    win_rate_pct = (wins / len(closing) * 100) if closing else 0.0
+
+    return {
+        "symbol":            symbol,
+        "date_start":        date_start,
+        "date_end":          date_end,
+        "days":              days,
+        "total_return_pct":  round(total_return_pct, 2),
+        "max_drawdown_pct":  round(max_dd, 2),
+        "sharpe_ratio":      round(sharpe, 3),
+        "win_rate_pct":      round(win_rate_pct, 1),
+        "initial_equity":    round(initial, 2),
+        "final_equity":      round(final, 2),
+        "n_trades":          len(trades),
+    }
+
+
+def _write_metrics_csv(metrics: dict, path: Path) -> None:
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(metrics.keys()))
+        w.writeheader()
+        w.writerow(metrics)
+
+
+# ---------------------------------------------------------------------------
 # CSV readers
 # ---------------------------------------------------------------------------
 
-def _read_equity(path: Path) -> list[EquityPoint]:
+def _read_equity(
+    path: Path, date_start: str = "", date_end: str = ""
+) -> list[EquityPoint]:
     if not path.exists():
         return []
     points: list[EquityPoint] = []
     with open(path, newline="") as f:
         for row in csv.DictReader(f):
             ts = row.get("timestamp") or row.get("date") or ""
+            if date_start and ts < date_start:
+                continue
+            if date_end and ts > date_end:
+                break
             try:
                 points.append(EquityPoint(date=ts, equity=float(row.get("equity", 0))))
             except (ValueError, TypeError):
@@ -367,36 +359,25 @@ def _read_equity(path: Path) -> list[EquityPoint]:
     return points
 
 
-def _read_trades(path: Path) -> list[dict]:
+def _read_trades(
+    path: Path, date_start: str = "", date_end: str = ""
+) -> list[dict]:
     if not path.exists():
         return []
-    with open(path, newline="") as f:
-        return [dict(r) for r in csv.DictReader(f)][:500]
-
-
-def _read_metrics(path: Path) -> dict:
-    if not path.exists():
-        return {}
+    rows = []
     with open(path, newline="") as f:
         for row in csv.DictReader(f):
-            return {k: _coerce(v) for k, v in row.items()}
-    return {}
+            ts = row.get("timestamp") or row.get("date") or ""
+            if date_start and ts < date_start:
+                continue
+            if date_end and ts > date_end:
+                continue
+            rows.append(dict(row))
+    return rows[:500]
 
 
-def _load_base_config() -> dict:
-    if not BASE_CONFIG.exists():
-        return {}
-    with open(BASE_CONFIG) as f:
-        return yaml.safe_load(f) or {}
-
-
-def _coerce(v: str):
-    try:
-        return int(v)
-    except (ValueError, TypeError):
-        pass
+def _coerce(v) -> float:
     try:
         return float(v)
     except (ValueError, TypeError):
-        pass
-    return v
+        return 0.0

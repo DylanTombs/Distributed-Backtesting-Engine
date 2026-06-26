@@ -129,7 +129,6 @@ def trigger_backtest(req: BacktestRequest) -> BacktestResponse:
             tickers=req.tickers,
             date_start=req.date_start,
             date_end=req.date_end,
-            skip_train=req.skip_train,
         )
     except RuntimeError as exc:
         logger.exception("Backtest failed")
