@@ -45,6 +45,7 @@ class WalkForwardConfig:
     test_bars: int = 63          # out-of-sample test window per fold
     step_bars: int = 63          # step between fold test windows
     n_folds: int = 5             # number of folds to run
+    max_epochs: int = 30         # training epochs per fold
     seed: int = 42
 
 
@@ -159,7 +160,10 @@ class WalkForwardValidator:
         The model import is deferred so the validator can be imported and
         unit-tested without a GPU / full PyTorch environment.
         """
-        df = pd.read_csv(feature_csv, parse_dates=['date'])
+        df = pd.read_csv(feature_csv)
+        if 'date' not in df.columns and 'timestamp' in df.columns:
+            df = df.rename(columns={'timestamp': 'date'})
+        df['date'] = pd.to_datetime(df['date'])
         df = df.sort_values('date').reset_index(drop=True)
 
         folds = self.get_fold_boundaries(len(df))
@@ -203,9 +207,10 @@ class WalkForwardValidator:
 
         set_seed(self.config.seed)
 
-        train_df = df.iloc[fold.train_start:fold.train_end].copy()
-        val_df = df.iloc[fold.val_start:fold.val_end].copy()
-        test_df = df.iloc[fold.test_start:fold.test_end].copy()
+        # reset_index so numpy arrays in DataFrameDataset align with iloc positions
+        train_df = df.iloc[fold.train_start:fold.train_end].reset_index(drop=True)
+        val_df   = df.iloc[fold.val_start:fold.val_end].reset_index(drop=True)
+        test_df  = df.iloc[fold.test_start:fold.test_end].reset_index(drop=True)
 
         # Add a dummy ticker column if not present (single-symbol CSVs)
         for part in (train_df, val_df, test_df):
@@ -224,7 +229,7 @@ class WalkForwardValidator:
             checkpoints=f'./checkpoints/wf_{symbol}_fold{fold.fold}/',
             encIn=len(aux_features) + 1,
             decIn=len(aux_features) + 1,
-            trainEpochs=30,   # fast per-fold training
+            trainEpochs=self.config.max_epochs,
             seed=self.config.seed,
         ))
 
@@ -362,6 +367,8 @@ def _parse_cli():
     p.add_argument('--n-folds', type=int, default=5)
     p.add_argument('--min-train-bars', type=int, default=252)
     p.add_argument('--test-bars', type=int, default=63)
+    p.add_argument('--max-epochs', type=int, default=30,
+                   help='Training epochs per fold (fewer = faster)')
     p.add_argument('--seed', type=int, default=42)
     return p.parse_args()
 
@@ -374,6 +381,7 @@ def main():
         n_folds=args.n_folds,
         min_train_bars=args.min_train_bars,
         test_bars=args.test_bars,
+        max_epochs=args.max_epochs,
         seed=args.seed,
     )
     validator = WalkForwardValidator(cfg)

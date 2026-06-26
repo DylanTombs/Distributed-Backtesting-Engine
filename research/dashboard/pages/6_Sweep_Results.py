@@ -34,7 +34,7 @@ if best_cfg:
     with st.expander("Full best config"):
         st.json(best_cfg)
 else:
-    st.info(f"No `{MODELS_DIR}/best_config.yaml` found. Run an Optuna sweep first.")
+    st.info(f"No `{MODELS_DIR}/best_config.yaml` found. Best config will appear here after a sweep completes.")
 
 st.divider()
 
@@ -45,10 +45,7 @@ study_name   = get_sweep_study_name(MODELS_DIR)
 trials_df = load_optuna_trials(storage_url, study_name) if storage_url else None
 
 if trials_df is None or trials_df.empty:
-    st.info(
-        "No Optuna trial data found. "
-        "Either run a sweep or check `models/sweep_config.yaml` for the storage URL."
-    )
+    st.info("No sweep trial data found. Trial history will appear here after a sweep completes.")
     st.stop()
 
 st.subheader(f"Trial History — `{study_name}`")

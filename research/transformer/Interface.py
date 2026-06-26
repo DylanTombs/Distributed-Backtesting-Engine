@@ -106,7 +106,7 @@ class Model_Interface:
             batch_size=self.args.batchSize,
             shuffle=(flag == 'train'),
             num_workers=0,  # deterministic; no inter-process randomness
-            drop_last=(flag != 'pred'),
+            drop_last=(flag == 'train'),
         )
         return dataset, loader
 

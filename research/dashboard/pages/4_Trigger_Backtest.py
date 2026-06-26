@@ -14,6 +14,8 @@ st.title("🚀 Trigger Backtest")
 
 # ---- Options ----------------------------------------------------------------
 with st.expander("Pipeline options", expanded=True):
+    skip_features = st.checkbox("Skip feature engineering (--skip-features)", value=True,
+                                help="Use existing feature CSVs; skip Stage 1. Enable when data hasn't changed.")
     skip_train   = st.checkbox("Skip training (--skip-train)", value=False,
                                help="Re-export an existing checkpoint; skip model training.")
     no_tearsheet = st.checkbox("Skip tearsheet (--no-tearsheet)", value=False,
@@ -43,6 +45,8 @@ if run_btn:
     st.session_state["pipeline_running"] = True
 
     cmd = [sys.executable, "run_pipeline.py"]
+    if skip_features:
+        cmd.append("--skip-features")
     if skip_train:
         cmd.append("--skip-train")
     if no_tearsheet:

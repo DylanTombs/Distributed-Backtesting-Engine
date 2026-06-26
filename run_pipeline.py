@@ -39,6 +39,7 @@ class PipelineConfig(BaseModel):
     data_dir: str = "data"
     feature_dir: str = "features"
     model_dir: str = "models"
+    skip_features: bool = False       # skip feature engineering (Stage 1)
     skip_train: bool = False
     no_tearsheet: bool = False       # skip HTML tearsheet generation
     archive_run: bool = False        # move outputs into output/runs/<timestamp>/
@@ -127,6 +128,8 @@ def _parse_args() -> argparse.Namespace:
                    help="Directory to write enriched feature CSVs")
     p.add_argument("--model-dir", default="models",
                    help="Directory to write exported model artefacts")
+    p.add_argument("--skip-features", action="store_true",
+                   help="Skip feature engineering (Stage 1); use existing feature CSVs")
     p.add_argument("--skip-train", action="store_true",
                    help="Skip training and re-export an existing checkpoint")
     p.add_argument("--no-tearsheet", action="store_true",
@@ -163,6 +166,7 @@ def main() -> None:
         "data_dir":      cli.data_dir,
         "feature_dir":   cli.feature_dir,
         "model_dir":     cli.model_dir,
+        "skip_features": cli.skip_features,
         "skip_train":    cli.skip_train,
         "no_tearsheet":  cli.no_tearsheet,
         "archive_run":   cli.archive_run,
@@ -196,15 +200,18 @@ def main() -> None:
     python = sys.executable
 
     # ------------------------------------------------------------------
-    # Stage 1 — Feature engineering
+    # Stage 1 — Feature engineering (skippable when CSVs already exist)
     # ------------------------------------------------------------------
-    print("\n[Stage 1/4] Feature engineering")
-    run([
-        python,
-        "research/features/pipeline.py",
-        cfg.data_dir,
-        "-o", cfg.feature_dir,
-    ])
+    if cfg.skip_features:
+        print("\n[Stage 1/4] Feature engineering skipped (--skip-features)")
+    else:
+        print("\n[Stage 1/4] Feature engineering")
+        run([
+            python,
+            "research/features/pipeline.py",
+            cfg.data_dir,
+            "-o", cfg.feature_dir,
+        ])
 
     # ------------------------------------------------------------------
     # Stage 2 — Training (skippable when re-exporting an existing model)

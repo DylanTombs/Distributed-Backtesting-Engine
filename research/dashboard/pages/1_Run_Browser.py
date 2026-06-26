@@ -29,12 +29,12 @@ for r in runs:
     m = r.metrics
     rows.append({
         "Run ID":        r.run_id,
-        "Symbols":       ", ".join(r.symbols),
+        "Symbols":       ", ".join(r.symbols) if r.symbols else "—",
         "Sharpe":        round(m.get("sharpe_ratio", 0.0), 3),
-        "Max DD (%)":    round(m.get("max_drawdown", 0.0), 2),
-        "Return (%)":    round(m.get("total_return", 0.0), 2),
-        "Alpha (%)":     round(m.get("alpha", 0.0), 2),
-        "Days":          int(m.get("trading_days", 0)),
+        "Max DD (%)":    round(m.get("max_drawdown_pct", 0.0), 2),
+        "Return (%)":    round(m.get("total_return_pct", 0.0), 2),
+        "Win Rate (%)":  round(m.get("win_rate_pct", 0.0), 1),
+        "Days":          int(m.get("days", 0)),
         "Has Tearsheet": "✅" if r.tearsheet_path else "—",
     })
 
@@ -60,7 +60,8 @@ if selected_id:
     with col1:
         st.markdown("**Equity Curve**")
         if not art.equity.empty and "timestamp" in art.equity.columns:
-            st.line_chart(art.equity.set_index("timestamp")[["equity", "benchmark_equity"]])
+            eq_cols = [c for c in ["equity", "benchmark_equity"] if c in art.equity.columns]
+            st.line_chart(art.equity.set_index("timestamp")[eq_cols])
 
     with col2:
         st.markdown("**Trades**")

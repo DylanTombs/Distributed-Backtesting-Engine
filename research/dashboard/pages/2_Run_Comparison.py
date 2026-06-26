@@ -4,6 +4,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
+import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 
@@ -53,10 +54,12 @@ win_rates = []
 for run in selected_runs:
     if run.trades.empty or "profit" not in run.trades.columns:
         continue
-    sells = run.trades[run.trades.get("direction", pd.Series()).isin(["SELL", "COVER"])] \
-        if "direction" in run.trades.columns else run.trades
+    if "direction" in run.trades.columns:
+        sells = run.trades[run.trades["direction"].isin(["SELL", "COVER"])]
+    else:
+        sells = run.trades
     total = len(sells)
-    wins = int(sells["profit"].sum()) if total > 0 else 0
+    wins = int((sells["profit"] > 0).sum()) if total > 0 else 0
     win_rates.append({
         "Run": run.meta.run_id,
         "Total Trades": total,
@@ -65,5 +68,6 @@ for run in selected_runs:
     })
 
 if win_rates:
-    import pandas as pd
     st.dataframe(pd.DataFrame(win_rates), use_container_width=True, hide_index=True)
+else:
+    st.caption("No trade data available for selected runs.")
