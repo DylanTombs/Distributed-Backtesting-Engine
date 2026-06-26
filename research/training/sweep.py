@@ -42,11 +42,11 @@ def _suggest_params(trial) -> dict:
     import optuna
 
     d_model = trial.suggest_categorical("d_model", D_MODEL_CHOICES)
-    # n_heads must divide d_model — restrict to valid divisors
-    valid_heads = [h for h in N_HEADS_CHOICES if d_model % h == 0]
-    if not valid_heads:
+    # always suggest from the full list so the distribution is consistent across trials;
+    # prune trials where n_heads doesn't divide d_model
+    n_heads = trial.suggest_categorical("n_heads", N_HEADS_CHOICES)
+    if d_model % n_heads != 0:
         raise optuna.TrialPruned()
-    n_heads = trial.suggest_categorical("n_heads", valid_heads)
 
     return dict(
         d_model=d_model,
@@ -67,7 +67,10 @@ def _suggest_params(trial) -> dict:
 def make_objective(feature_csv: str, max_epochs: int, seed: int):
     """Return an Optuna objective function closed over dataset + settings."""
 
-    df = pd.read_csv(feature_csv, parse_dates=['date'])
+    df = pd.read_csv(feature_csv)
+    if 'date' not in df.columns and 'timestamp' in df.columns:
+        df = df.rename(columns={'timestamp': 'date'})
+    df['date'] = pd.to_datetime(df['date'])
     df = df.sort_values('date').reset_index(drop=True)
 
     def objective(trial) -> float:
@@ -147,6 +150,16 @@ def export_best_config(study, output_dir: str) -> str:
     return path
 
 
+def export_sweep_config(storage: str, study_name: str, output_dir: str) -> str:
+    """Write sweep_config.yaml so the dashboard can locate the Optuna DB."""
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, "sweep_config.yaml")
+    with open(path, "w") as f:
+        yaml.dump({"storage": storage, "study_name": study_name}, f,
+                  default_flow_style=False)
+    return path
+
+
 def export_sweep_results(study, output_dir: str) -> str:
     os.makedirs(output_dir, exist_ok=True)
     rows = []
@@ -206,11 +219,17 @@ def main():
     study.optimize(objective, n_trials=args.n_trials)
 
     print(f"\nSweep complete: {len(study.trials)} trials")
-    print(f"Best val_mse: {study.best_value:.6f}")
-    print(f"Best params: {study.best_params}")
 
-    export_best_config(study, args.output_dir)
+    completed = [t for t in study.trials if t.value is not None]
+    if completed:
+        print(f"Best val_mse: {study.best_value:.6f}")
+        print(f"Best params: {study.best_params}")
+        export_best_config(study, args.output_dir)
+    else:
+        print("No completed trials — all were pruned. Check training data size or NaN losses.")
+
     export_sweep_results(study, args.output_dir)
+    export_sweep_config(storage, args.study_name, args.output_dir)
 
     top5 = sorted(
         [t for t in study.trials if t.value is not None],

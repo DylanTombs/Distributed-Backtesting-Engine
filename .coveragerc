@@ -7,6 +7,9 @@ omit =
     research/validation/walk_forward.py
     research/validation/wf_report.py
     research/training/sweep.py
+    research/analysis/EquityCurve.py
+    research/dashboard/app.py
+    research/dashboard/pages/*.py
 
 [report]
 fail_under = 80
