@@ -4,13 +4,14 @@
 # Services:
 #   backtester  — C++ event-driven backtesting engine (ready to run now)
 #   pipeline    — Python: feature engineering → training → model export
+#   dashboard   — Streamlit research dashboard (http://localhost:8501)
 #
 # Quick start (backtester only):
 #   1. python scripts/convert_scalers.py        # convert pkl → csv scalers
 #   2. mkdir -p output
 #   3. docker compose run --rm backtester
 #
-# Full pipeline:
+# Full pipeline + dashboard:
 #   docker compose up --build
 # =============================================================================
 
@@ -55,3 +56,29 @@ services:
     environment:
       - CUDA_VISIBLE_DEVICES=""
     command: ["--data-dir", "/app/data", "--feature-dir", "/app/features", "--model-dir", "/app/models"]
+
+  # ---------------------------------------------------------------------------
+  # dashboard: Streamlit research dashboard
+  # Reads backtest outputs and model artifacts; can write backtest_config.yaml.
+  # Access at http://localhost:8501 after `docker compose up`.
+  # ---------------------------------------------------------------------------
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    image: tradingtransformer-dashboard:latest
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./output:/app/output:ro           # read backtest outputs (equity, trades, metrics)
+      - ./models:/app/models:ro           # read model artifacts and sweep results
+      - ./backtest_config.yaml:/app/backtest_config.yaml  # read/write config
+    depends_on:
+      - pipeline
+    command:
+      - streamlit
+      - run
+      - research/dashboard/app.py
+      - --server.port=8501
+      - --server.address=0.0.0.0
+      - --server.headless=true
