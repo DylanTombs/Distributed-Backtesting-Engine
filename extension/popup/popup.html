@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TradingTransformer</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="header">
+    <span class="header-logo">TradingTransformer</span>
+    <span class="header-status" id="status-dot" title="API status">●</span>
+  </header>
+
+  <!-- Detection panel -->
+  <section class="panel" id="panel-detect">
+    <div class="section-label">Detected event</div>
+    <div class="row">
+      <select id="event-select" class="select-event"></select>
+      <button id="btn-redetect" class="btn-icon" title="Re-detect from page">↺</button>
+    </div>
+
+    <div class="section-label mt">Tickers</div>
+    <div id="ticker-chips" class="chips"></div>
+
+    <div class="section-label mt">Date window</div>
+    <div class="row">
+      <input type="date" id="date-start" class="date-input" />
+      <span class="date-sep">→</span>
+      <input type="date" id="date-end" class="date-input" />
+    </div>
+
+    <div class="confidence-bar" id="confidence-bar">
+      <div class="confidence-fill" id="confidence-fill"></div>
+    </div>
+    <div class="confidence-label" id="confidence-label">Detecting…</div>
+  </section>
+
+  <!-- Run button -->
+  <section class="panel panel-run">
+    <button id="btn-run" class="btn-primary" disabled>▶ Run Backtest</button>
+  </section>
+
+  <!-- Results panel (hidden until backtest completes) -->
+  <section class="panel" id="panel-results" style="display:none">
+    <div class="section-label">Equity curve</div>
+    <canvas id="equity-chart" height="140"></canvas>
+
+    <div class="metrics-grid" id="metrics-grid"></div>
+
+    <a id="link-dashboard" class="btn-secondary" href="#" target="_blank">
+      Open in Dashboard →
+    </a>
+  </section>
+
+  <!-- Error / info message -->
+  <div id="msg-box" class="msg-box" style="display:none"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
