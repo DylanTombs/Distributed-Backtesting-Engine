@@ -1,95 +1,76 @@
 /**
- * content.js — injected into financial news pages
+ * content.js — injects a persistent floating action button on every page.
  *
- * 1. Detects whether the current page looks financial (≥2 known tickers in body).
- * 2. Injects a floating "Backtest this →" button if so.
- * 3. On click, opens the extension popup (the button is cosmetic — the real
- *    UI is in popup.js; this just signals the user that the page is relevant).
- *
- * Runs at document_idle on the allowed-URL list in manifest.json.
+ * Clicking the FAB opens the extension popup (Chrome doesn't allow scripts to
+ * open popups directly, so we open it as a side panel via chrome.action.openPopup
+ * in the background worker, triggered by a message from here).
  */
 
-// Representative S&P 500 / NASDAQ 100 tickers to scan for
-const KNOWN_TICKERS = new Set([
-  "AAPL","MSFT","AMZN","NVDA","GOOGL","META","TSLA","JPM","XOM","CVX",
-  "WMT","PG","UNH","LLY","AVGO","MA","V","HD","MRK","ABBV","COST","PEP",
-  "BAC","MCD","CSCO","NFLX","DIS","ACN","TMO","ORCL","KO","TXN","QCOM",
-  "NKE","GS","MS","C","WFC","INTC","IBM","AMD","BABA","CRM","ADBE","PYPL",
-  "GE","CAT","DE","HON","RTX","LMT","NOC","BA","UAL","AAL","DAL","CCL",
-  "SPY","QQQ","DIA","IWM","TLT","GLD","USO","EEM",
-]);
+const FAB_ID = "tt-fab";
 
-const MIN_TICKERS = 2;
-const BUTTON_ID   = "tt-backtest-btn";
+function injectFab() {
+  if (document.getElementById(FAB_ID)) return;
 
-function countTickersInPage() {
-  const text = document.body.innerText.toUpperCase();
-  let count = 0;
-  for (const ticker of KNOWN_TICKERS) {
-    // Word-boundary check: surrounded by non-alpha chars
-    const re = new RegExp(`(?<![A-Z])${ticker}(?![A-Z])`);
-    if (re.test(text)) {
-      count++;
-      if (count >= MIN_TICKERS) return count;
-    }
-  }
-  return count;
-}
+  const fab = document.createElement("button");
+  fab.id = FAB_ID;
+  fab.title = "TradingTransformer — backtest this page";
+  fab.innerHTML = `
+    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+         width="22" height="22" style="display:block">
+      <!-- candlestick chart icon -->
+      <rect x="4"  y="9"  width="3" height="8"  rx="0.5" fill="#38bdf8"/>
+      <line x1="5.5" y1="7"  x2="5.5" y2="9"  stroke="#38bdf8" stroke-width="1.5" stroke-linecap="round"/>
+      <line x1="5.5" y1="17" x2="5.5" y2="19" stroke="#38bdf8" stroke-width="1.5" stroke-linecap="round"/>
 
-function injectButton() {
-  if (document.getElementById(BUTTON_ID)) return;
+      <rect x="10.5" y="5"  width="3" height="10" rx="0.5" fill="#4ade80"/>
+      <line x1="12"  y1="3"  x2="12"  y2="5"  stroke="#4ade80" stroke-width="1.5" stroke-linecap="round"/>
+      <line x1="12"  y1="15" x2="12"  y2="18" stroke="#4ade80" stroke-width="1.5" stroke-linecap="round"/>
 
-  const btn = document.createElement("button");
-  btn.id = BUTTON_ID;
-  btn.textContent = "Backtest this →";
-  btn.title = "TradingTransformer — run a contextual backtest on this article";
+      <rect x="17" y="11" width="3" height="6"  rx="0.5" fill="#f87171"/>
+      <line x1="18.5" y1="9"  x2="18.5" y2="11" stroke="#f87171" stroke-width="1.5" stroke-linecap="round"/>
+      <line x1="18.5" y1="17" x2="18.5" y2="19" stroke="#f87171" stroke-width="1.5" stroke-linecap="round"/>
+    </svg>
+  `;
 
-  Object.assign(btn.style, {
+  Object.assign(fab.style, {
     position:     "fixed",
-    bottom:       "24px",
-    right:        "24px",
+    bottom:       "28px",
+    right:        "28px",
     zIndex:       "2147483647",
-    padding:      "10px 16px",
+    width:        "48px",
+    height:       "48px",
+    borderRadius: "50%",
     background:   "#0f172a",
-    color:        "#f8fafc",
-    border:       "none",
-    borderRadius: "8px",
-    fontSize:     "13px",
-    fontFamily:   "system-ui, sans-serif",
+    border:       "2px solid #38bdf8",
     cursor:       "pointer",
-    boxShadow:    "0 4px 12px rgba(0,0,0,0.4)",
-    transition:   "opacity 0.2s",
-    opacity:      "0.92",
+    display:      "flex",
+    alignItems:   "center",
+    justifyContent: "center",
+    boxShadow:    "0 4px 16px rgba(56,189,248,0.35)",
+    transition:   "transform 0.15s, box-shadow 0.15s",
+    padding:      "0",
   });
 
-  btn.addEventListener("mouseenter", () => { btn.style.opacity = "1"; });
-  btn.addEventListener("mouseleave", () => { btn.style.opacity = "0.92"; });
-
-  // Clicking just focuses the extension icon — the popup does the real work
-  btn.addEventListener("click", () => {
-    btn.textContent = "Opening…";
-    btn.disabled = true;
-    // Signal background that the user wants to open the popup for this tab.
-    // Chrome doesn't allow programmatic popup opening, so we just flash the
-    // badge to draw attention to the extension icon.
-    chrome.runtime.sendMessage({ type: "HEALTH_CHECK" }, (resp) => {
-      if (resp && !resp.error) {
-        btn.textContent = "Click the extension icon ↗";
-      } else {
-        btn.textContent = "API offline — start uvicorn on :8502";
-        btn.style.background = "#7f1d1d";
-      }
-      setTimeout(() => {
-        btn.textContent = "Backtest this →";
-        btn.disabled = false;
-      }, 3000);
-    });
+  fab.addEventListener("mouseenter", () => {
+    fab.style.transform  = "scale(1.1)";
+    fab.style.boxShadow  = "0 6px 20px rgba(56,189,248,0.55)";
+  });
+  fab.addEventListener("mouseleave", () => {
+    fab.style.transform  = "scale(1)";
+    fab.style.boxShadow  = "0 4px 16px rgba(56,189,248,0.35)";
   });
 
-  document.body.appendChild(btn);
+  // Tell background to open the popup
+  fab.addEventListener("click", () => {
+    chrome.runtime.sendMessage({ type: "OPEN_POPUP" });
+  });
+
+  document.body.appendChild(fab);
 }
 
-// Run after DOM is ready
-if (countTickersInPage() >= MIN_TICKERS) {
-  injectButton();
+// Inject as soon as body is available
+if (document.body) {
+  injectFab();
+} else {
+  document.addEventListener("DOMContentLoaded", injectFab);
 }

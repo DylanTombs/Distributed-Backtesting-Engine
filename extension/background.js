@@ -80,6 +80,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: true });
       return true;
 
+    case "OPEN_POPUP":
+      // chrome.action.openPopup() is only available in Chrome 127+.
+      // Fall back gracefully if unavailable (older Chrome / non-focused window).
+      if (chrome.action?.openPopup) {
+        chrome.action.openPopup().catch(() => {});
+      }
+      sendResponse({ ok: true });
+      return true;
+
     default:
       sendResponse({ error: `Unknown message type: ${msg.type}` });
   }
