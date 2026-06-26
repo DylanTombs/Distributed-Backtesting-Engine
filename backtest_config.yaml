@@ -92,6 +92,21 @@ buy_threshold:   0.005   # 0.5% predicted upside required for LONG
 exit_threshold:  0.000   # Any predicted decline triggers EXIT
 
 # =============================================================================
+# Short Selling  (Task 4.1)
+#
+# allow_short:       Set to true to enable SHORT signals.  When false (default)
+#                    the strategy only goes long; bearish predictions are ignored.
+#                    Disabled by default to preserve backward-compatible behaviour.
+#
+# short_margin_rate: Fraction of the position's notional value that must be held
+#                    as margin when shorting (1.0 = 100% cash-backed, no leverage).
+#                    Must be in (0.0, 2.0].
+# =============================================================================
+
+allow_short:       false   # Disabled — backward-compatible default
+short_margin_rate: 1.0     # 100% margin (no leverage)
+
+# =============================================================================
 # Logging
 #
 # log_level:  trace | debug | info | warn | error | critical

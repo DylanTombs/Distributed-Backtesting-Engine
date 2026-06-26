@@ -6,6 +6,12 @@
 #include <spdlog/spdlog.h>
 #include <stdexcept>
 
+#ifdef ML_STRATEGY_ENABLED
+std::unordered_map<std::string,
+                   std::shared_ptr<torch::jit::script::Module>>
+    MLStrategy::modelCache_;
+#endif
+
 // ---------------------------------------------------------------------------
 // Construction
 // ---------------------------------------------------------------------------
@@ -16,11 +22,13 @@ MLStrategy::MLStrategy(const std::string& modelPath,
                        int    seqLen,
                        int    nFeatures,
                        double buyThreshold,
-                       double exitThreshold)
+                       double exitThreshold,
+                       bool   allowShort)
     : seqLen_(seqLen)
     , nFeatures_(nFeatures)
     , buyThreshold_(buyThreshold)
     , exitThreshold_(exitThreshold)
+    , allowShort_(allowShort)
 {
     featureScaler_ = ScalerParams::loadFromCSV(featureScalerPath);
     targetScaler_  = ScalerParams::loadFromCSV(targetScalerPath);
@@ -34,10 +42,20 @@ MLStrategy::MLStrategy(const std::string& modelPath,
 
 #ifdef ML_STRATEGY_ENABLED
     try {
-        model_       = torch::jit::load(modelPath);
-        modelLoaded_ = true;
-        model_.eval();
-        spdlog::info("MLStrategy: loaded model from {}", modelPath);
+        auto it = modelCache_.find(modelPath);
+        if (it != modelCache_.end()) {
+            model_       = it->second;
+            modelLoaded_ = true;
+            spdlog::debug("MLStrategy: reusing cached model from {}", modelPath);
+        } else {
+            auto m = std::make_shared<torch::jit::script::Module>(
+                torch::jit::load(modelPath));
+            m->eval();
+            modelCache_[modelPath] = m;
+            model_       = m;
+            modelLoaded_ = true;
+            spdlog::info("MLStrategy: loaded model from {}", modelPath);
+        }
     } catch (const c10::Error& e) {
         spdlog::error("MLStrategy: failed to load model: {}", e.what());
         modelLoaded_ = false;
@@ -79,24 +97,41 @@ void MLStrategy::onMarketEvent(const MarketEvent& event, EventQueue& queue) {
     if (predictedClose < 0.0) return;   // inference not available
 
     const double currentClose = event.price;
+    const bool bullish = predictedClose > currentClose * (1.0 + buyThreshold_);
+    const bool bearish = predictedClose < currentClose * (1.0 - exitThreshold_);
 
-    // Entry: predicted meaningful upside
-    if (!hasPosition_ &&
-        predictedClose > currentClose * (1.0 + buyThreshold_)) {
-        queue.push(std::make_shared<SignalEvent>(event.symbol, SignalType::LONG));
-        hasPosition_ = true;
-        spdlog::debug("MLStrategy LONG  {} @ {}  price={:.4f}  pred={:.4f}",
-                      event.symbol, event.timestamp, currentClose, predictedClose);
-        return;
-    }
+    switch (positionDir_) {
+        case PositionDirection::FLAT:
+            if (bullish) {
+                queue.push(std::make_shared<SignalEvent>(event.symbol, SignalType::LONG));
+                positionDir_ = PositionDirection::LONG;
+                spdlog::debug("MLStrategy LONG  {} @ {}  price={:.4f}  pred={:.4f}",
+                              event.symbol, event.timestamp, currentClose, predictedClose);
+            } else if (bearish && allowShort_) {
+                queue.push(std::make_shared<SignalEvent>(event.symbol, SignalType::SHORT));
+                positionDir_ = PositionDirection::SHORT;
+                spdlog::debug("MLStrategy SHORT {} @ {}  price={:.4f}  pred={:.4f}",
+                              event.symbol, event.timestamp, currentClose, predictedClose);
+            }
+            break;
 
-    // Exit: any predicted decline (or beyond exitThreshold)
-    if (hasPosition_ &&
-        predictedClose < currentClose * (1.0 - exitThreshold_)) {
-        queue.push(std::make_shared<SignalEvent>(event.symbol, SignalType::EXIT));
-        hasPosition_ = false;
-        spdlog::debug("MLStrategy EXIT  {} @ {}  price={:.4f}  pred={:.4f}",
-                      event.symbol, event.timestamp, currentClose, predictedClose);
+        case PositionDirection::LONG:
+            if (bearish) {
+                queue.push(std::make_shared<SignalEvent>(event.symbol, SignalType::EXIT));
+                positionDir_ = PositionDirection::FLAT;
+                spdlog::debug("MLStrategy EXIT  {} @ {}  price={:.4f}  pred={:.4f}",
+                              event.symbol, event.timestamp, currentClose, predictedClose);
+            }
+            break;
+
+        case PositionDirection::SHORT:
+            if (bullish) {
+                queue.push(std::make_shared<SignalEvent>(event.symbol, SignalType::EXIT));
+                positionDir_ = PositionDirection::FLAT;
+                spdlog::debug("MLStrategy COVER {} @ {}  price={:.4f}  pred={:.4f}",
+                              event.symbol, event.timestamp, currentClose, predictedClose);
+            }
+            break;
     }
 }
 
@@ -132,7 +167,7 @@ double MLStrategy::runInference() const {
 
     // TransformerInferenceWrapper.forward(xEnc, xMarkEnc) → (1, predLen, 1)
     std::vector<torch::jit::IValue> inputs = {xEnc, xMark};
-    auto output = model_.forward(inputs).toTensor();
+    auto output = model_->forward(inputs).toTensor();
 
     // Take the first step of the prediction horizon
     float scaledPred = output[0][0][0].item<float>();

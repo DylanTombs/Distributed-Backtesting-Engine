@@ -27,6 +27,7 @@ import sys
 
 import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed
 
 from technicalIndicators import (
     calculateRsi, calculateMacd, calculateMACDSignal,
@@ -214,6 +215,9 @@ def main():
                         help="A single CSV file or a directory of CSV files")
     parser.add_argument("-o", "--output", default="features",
                         help="Output directory (default: ./features)")
+    parser.add_argument("--workers", type=int, default=1,
+                        help="Number of parallel worker processes (default: 1). "
+                             "Use -1 for all available CPUs.")
     args = parser.parse_args()
 
     if os.path.isdir(args.input):
@@ -225,9 +229,11 @@ def main():
         if not files:
             print(f"No CSV files found in {args.input}", file=sys.stderr)
             sys.exit(1)
-        print(f"Processing {len(files)} file(s) → {args.output}/")
-        for f in files:
-            process_file(f, args.output)
+        print(f"Processing {len(files)} file(s) → {args.output}/ "
+              f"(workers={args.workers})")
+        Parallel(n_jobs=args.workers)(
+            delayed(process_file)(f, args.output) for f in files
+        )
 
     elif os.path.isfile(args.input):
         out_dir = (args.output if args.output != "features"

@@ -249,3 +249,47 @@ A record of key architectural and implementation decisions. Ordered by subsystem
 **Trade-offs:**
 - Bind mounts are host-path-dependent. The compose file assumes a specific directory layout relative to the project root.
 - In a CI or remote environment, artefacts must be placed at the expected paths before `docker compose run` is called.
+
+---
+
+## Phase 4 — Strategy Extension
+
+### ADR-023: Spearman over Pearson for correlation-based position sizing discount
+
+**Decision:** Replace `pearsonCorr` with `spearmanCorr` in `Portfolio::correlationDiscount()`.
+
+**Rationale:** Pearson correlation measures linear association and is sensitive to outliers. A single extreme-return day (earnings surprise, index rebalance, flash crash) can swing the Pearson estimate substantially, causing the position sizing discount to be applied too aggressively or not at all. Spearman rank correlation measures monotonic association on the rank-transformed series — the influence of any individual bar is bounded by its rank position, making the discount stable under fat-tailed return distributions. Implementation cost is minimal: Spearman reduces to Pearson on rank-transformed inputs, so `pearsonCorr` is reused rather than duplicated. Complexity is O(n log n) for the ranking step, identical in practice to the O(n) Pearson computation for window sizes used here (n ≤ 60).
+
+**Trade-offs:**
+- Backtest output values differ from pre-Phase-4 runs due to changed correlation estimates. The change is intentional and desirable — Pearson values were unreliable on this data.
+- Spearman is slightly more expensive (rank sort), but negligible for a 60-element window.
+
+### ADR-024: Path-keyed static model cache in MLStrategy
+
+**Decision:** `MLStrategy` maintains a static `modelCache_` (`path → shared_ptr<torch::jit::Module>`). The first instance for a given path loads the model; all subsequent instances reuse the shared pointer.
+
+**Rationale:** In a multi-symbol backtest, `MultiSymbolStrategy` creates one `MLStrategy` per symbol. Without the cache, `torch::jit::load()` is called N times for the same `.pt` file, loading N identical copies of the model into heap memory (~23 MB each). The cache reduces this to one load and one heap allocation regardless of symbol count. Thread safety is preserved: `torch::jit::Module::forward()` is safe for concurrent reads with `NoGradGuard`; each strategy owns its own input tensors.
+
+**Trade-offs:**
+- The static cache lives for the process lifetime. If a test creates strategies with different model paths, entries accumulate. Unit tests that need a clean state should not rely on the absence of cached models from prior test cases.
+- If the `.pt` file changes on disk between runs (e.g., retrain during a long process), the cache will serve the stale model. This is acceptable: the binary is designed for a single-run workflow, not hot-reloading.
+
+### ADR-025: Joblib over multiprocessing for parallel feature pipeline
+
+**Decision:** `pipeline.py` uses `joblib.Parallel` + `delayed` for the `--workers` flag rather than `multiprocessing.Pool`.
+
+**Rationale:** `joblib` is already in `requirements.txt` (added in Phase 3 for Optuna). `joblib.Parallel` handles edge cases better than raw `multiprocessing.Pool` for I/O-bound embarrassingly parallel workloads: it uses `loky` as the default backend (robust process reuse, cleaner shutdown), supports `n_jobs=-1` for all CPUs, and provides progress output. The sequential path (`n_jobs=1`) goes through the same code path, ensuring parity.
+
+**Trade-offs:**
+- Adds a `joblib` dependency for a relatively simple use case. Justified by the existing dependency and the reduction in boilerplate.
+- `loky` spawns a new process pool per `Parallel(...)` call. For a CLI tool this is fine; for a long-running service it would be inefficient.
+
+### ADR-026: Regex-based JSON parser for feature schema (no nlohmann/json dependency)
+
+**Decision:** `FeatureSchema::loadFromJSON()` extracts `"name"` values from the schema file using a single `std::regex` rather than adding a JSON library dependency.
+
+**Rationale:** The schema file is a project artefact we own and control. Its structure is stable: a flat array of objects, each with a `"name"` string field. A line-by-line regex extractor (`"name":\s*"([^"]+)"`) is sufficient and avoids adding `nlohmann/json` (or a `FetchContent` download) to the build. Adding a JSON library would be the right call if the schema needed to carry machine-read data beyond feature names — for now it does not.
+
+**Trade-offs:**
+- The parser is brittle to non-standard JSON formatting (e.g., multi-line string values, escaped quotes in names). Acceptable given we generate the file ourselves.
+- If the schema evolves to carry structured data (constraints, versioning rules), switch to a proper JSON library at that point.

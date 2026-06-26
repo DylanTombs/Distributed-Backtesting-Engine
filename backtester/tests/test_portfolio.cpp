@@ -181,11 +181,13 @@ TEST_F(PortfolioTest, ExitSignalFullyClosesOpenPosition) {
     EXPECT_DOUBLE_EQ(order.price, 150.0);
 }
 
-TEST_F(PortfolioTest, ShortSignalGeneratesSellOrder) {
+TEST_F(PortfolioTest, ShortSignalRejectedWhenAllowShortFalse) {
+    // Default Portfolio has allowShort=false — SHORT signal should produce HOLD
     portfolio.updateMarket(MarketEvent("AAPL", 150.0, "2024-01-01"));
     SignalEvent signal("AAPL", SignalType::SHORT);
     OrderEvent  order = portfolio.generateOrder(signal);
-    EXPECT_EQ(order.orderType, OrderType::SELL);
+    EXPECT_EQ(order.orderType, OrderType::HOLD);
+    EXPECT_EQ(order.quantity,  0);
 }
 
 // ---- CSV export -------------------------------------------------------------
@@ -225,4 +227,157 @@ TEST_F(PortfolioTest, ExportTradesWritesQuantityColumn) {
     std::string header;
     std::getline(file, header);
     EXPECT_EQ(header, "timestamp,symbol,price,quantity,direction,profit,pnl");
+}
+
+// ---------------------------------------------------------------------------
+// rankVector — Task 4.5
+// ---------------------------------------------------------------------------
+
+TEST(RankVector, DistinctValuesRankedCorrectly) {
+    const auto r = Portfolio::rankVector({3.0, 1.0, 2.0});
+    EXPECT_DOUBLE_EQ(r[0], 3.0);
+    EXPECT_DOUBLE_EQ(r[1], 1.0);
+    EXPECT_DOUBLE_EQ(r[2], 2.0);
+}
+
+TEST(RankVector, TiedValuesReceiveAverageRank) {
+    const auto r = Portfolio::rankVector({1.0, 1.0, 3.0});
+    EXPECT_DOUBLE_EQ(r[0], 1.5);
+    EXPECT_DOUBLE_EQ(r[1], 1.5);
+    EXPECT_DOUBLE_EQ(r[2], 3.0);
+}
+
+TEST(RankVector, AllTiedValuesReceiveMiddleRank) {
+    const auto r = Portfolio::rankVector({5.0, 5.0, 5.0});
+    EXPECT_DOUBLE_EQ(r[0], 2.0);
+    EXPECT_DOUBLE_EQ(r[1], 2.0);
+    EXPECT_DOUBLE_EQ(r[2], 2.0);
+}
+
+TEST(RankVector, SingleElementRankIsOne) {
+    const auto r = Portfolio::rankVector({42.0});
+    ASSERT_EQ(r.size(), 1u);
+    EXPECT_DOUBLE_EQ(r[0], 1.0);
+}
+
+TEST(RankVector, AlreadySortedAscendingRanksCorrectly) {
+    const auto r = Portfolio::rankVector({10.0, 20.0, 30.0});
+    EXPECT_DOUBLE_EQ(r[0], 1.0);
+    EXPECT_DOUBLE_EQ(r[1], 2.0);
+    EXPECT_DOUBLE_EQ(r[2], 3.0);
+}
+
+// ---------------------------------------------------------------------------
+// spearmanCorr — Task 4.5
+// ---------------------------------------------------------------------------
+
+TEST(SpearmanCorr, IdenticalSeriesReturnsOne) {
+    const std::deque<double> x = {1.0, 2.0, 3.0, 4.0, 5.0};
+    EXPECT_DOUBLE_EQ(Portfolio::spearmanCorr(x, x), 1.0);
+}
+
+TEST(SpearmanCorr, PerfectlyInverseSeriesReturnsMinusOne) {
+    const std::deque<double> x = {1.0, 2.0, 3.0, 4.0, 5.0};
+    const std::deque<double> y = {5.0, 4.0, 3.0, 2.0, 1.0};
+    EXPECT_DOUBLE_EQ(Portfolio::spearmanCorr(x, y), -1.0);
+}
+
+TEST(SpearmanCorr, OutlierDoesNotDistortMonotonicRelationship) {
+    // x has a large outlier; monotonic rank order between x and y is preserved
+    const std::deque<double> x = {1.0, 2.0, 3.0, 4.0, 100.0};
+    const std::deque<double> y = {2.0, 4.0, 6.0, 8.0, 10.0};
+    // Ranks of x: {1, 2, 3, 4, 5}; ranks of y: {1, 2, 3, 4, 5} → Spearman = 1.0
+    EXPECT_DOUBLE_EQ(Portfolio::spearmanCorr(x, y), 1.0);
+}
+
+TEST(SpearmanCorr, ResultIsAlwaysInBounds) {
+    const std::deque<double> x = {3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0, 6.0};
+    const std::deque<double> y = {7.0, 2.0, 8.0, 1.0, 8.0, 2.0, 8.0, 4.0};
+    const double r = Portfolio::spearmanCorr(x, y);
+    EXPECT_GE(r, -1.0);
+    EXPECT_LE(r,  1.0);
+}
+
+TEST(SpearmanCorr, SingleElementSeriesReturnsZero) {
+    const std::deque<double> x = {1.0};
+    const std::deque<double> y = {2.0};
+    EXPECT_DOUBLE_EQ(Portfolio::spearmanCorr(x, y), 0.0);
+}
+
+TEST(SpearmanCorr, UnequalLengthsUsesShortestSuffix) {
+    // x is longer; should use last 3 elements of x against all 3 of y
+    const std::deque<double> x = {99.0, 1.0, 2.0, 3.0};
+    const std::deque<double> y = {1.0,  2.0, 3.0};
+    EXPECT_DOUBLE_EQ(Portfolio::spearmanCorr(x, y), 1.0);
+}
+
+// ---------------------------------------------------------------------------
+// Short selling — Task 4.1
+// ---------------------------------------------------------------------------
+
+class ShortPortfolioTest : public ::testing::Test {
+protected:
+    static constexpr double CASH = 10'000.0;
+    // allowShort=true, shortMarginRate=1.0
+    Portfolio portfolio{CASH, 0.10, 0.20, 0.80, 60, 0.7, /*allowShort=*/true, /*marginRate=*/1.0};
+};
+
+TEST_F(ShortPortfolioTest, ShortSignalGeneratesSellOrder) {
+    portfolio.updateMarket(MarketEvent("AAPL", 100.0, "2024-01-01"));
+    SignalEvent signal("AAPL", SignalType::SHORT);
+    OrderEvent  order = portfolio.generateOrder(signal);
+    EXPECT_EQ(order.orderType, OrderType::SELL);
+    EXPECT_GT(order.quantity,  0);
+    EXPECT_DOUBLE_EQ(order.price, 100.0);
+}
+
+TEST_F(ShortPortfolioTest, ShortFillIncreasesRawCashAndNegatesPosition) {
+    // Selling 10 shares short at $100 → cash += 10*100 = +1000
+    portfolio.updateMarket(MarketEvent("AAPL", 100.0, "2024-01-01"));
+    portfolio.updateFill(FillEvent("AAPL", -10, 100.0, 0.0));
+    EXPECT_DOUBLE_EQ(portfolio.getCash(), CASH + 1000.0);
+    EXPECT_EQ(portfolio.getPosition("AAPL"), -10);
+}
+
+TEST_F(ShortPortfolioTest, ShortTradeRecordedWithShortDirection) {
+    portfolio.updateFill(FillEvent("AAPL", -5, 100.0, 0.0));
+    ASSERT_EQ(portfolio.getTrades().size(), 1u);
+    EXPECT_EQ(portfolio.getTrades()[0].direction, "SHORT");
+    EXPECT_EQ(portfolio.getTrades()[0].quantity,  5);
+}
+
+TEST_F(ShortPortfolioTest, CoverFillClearsShortPositionAndRecordsPnl) {
+    // Short 5 @ 100, cover @ 90 → profit = (100-90)*5 = 50
+    portfolio.updateFill(FillEvent("AAPL", -5, 100.0, 0.0));
+    portfolio.updateFill(FillEvent("AAPL",  5,  90.0, 0.0));
+
+    EXPECT_EQ(portfolio.getPosition("AAPL"), 0);
+    const auto& trades = portfolio.getTrades();
+    ASSERT_EQ(trades.size(), 2u);
+    EXPECT_EQ(trades[1].direction, "COVER");
+    EXPECT_DOUBLE_EQ(trades[1].pnl, 50.0);
+    EXPECT_TRUE(trades[1].profit);
+}
+
+TEST_F(ShortPortfolioTest, CoverAtHigherPriceIsALoss) {
+    // Short 5 @ 100, cover @ 110 → loss = (100-110)*5 = -50
+    portfolio.updateFill(FillEvent("AAPL", -5, 100.0, 0.0));
+    portfolio.updateFill(FillEvent("AAPL",  5, 110.0, 0.0));
+
+    const auto& trades = portfolio.getTrades();
+    ASSERT_EQ(trades.size(), 2u);
+    EXPECT_DOUBLE_EQ(trades[1].pnl, -50.0);
+    EXPECT_FALSE(trades[1].profit);
+}
+
+TEST_F(ShortPortfolioTest, ExitSignalOnShortPositionGeneratesBuyOrder) {
+    // Open a short, then EXIT → should BUY to cover
+    portfolio.updateMarket(MarketEvent("AAPL", 100.0, "2024-01-01"));
+    portfolio.updateFill(FillEvent("AAPL", -5, 100.0, 0.0));
+
+    SignalEvent exitSig("AAPL", SignalType::EXIT);
+    OrderEvent  order = portfolio.generateOrder(exitSig);
+
+    EXPECT_EQ(order.orderType, OrderType::BUY);
+    EXPECT_EQ(order.quantity,  5);
 }

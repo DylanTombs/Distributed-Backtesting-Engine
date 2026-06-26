@@ -16,7 +16,9 @@ BacktestEngine::BacktestEngine(Strategy&            strategy,
                 config.maxSymbolExposure,
                 config.maxTotalExposure,
                 config.correlationWindow,
-                config.correlationThreshold)
+                config.correlationThreshold,
+                config.allowShort,
+                config.shortMarginRate)
     , riskManager(config.maxPositionSize)
     , execution(config.commission,
                 config.halfSpread,

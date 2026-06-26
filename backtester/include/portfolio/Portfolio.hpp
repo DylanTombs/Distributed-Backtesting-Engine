@@ -30,9 +30,9 @@ struct EquityPoint {
 //   - Per-symbol buy-and-hold benchmark (equal-weight from first bars)
 //   - Exposure caps: maxSymbolExposure and maxTotalExposure guard against
 //     over-concentration before each LONG order is sized
-//   - 60-day rolling Pearson correlation between each new signal's symbol
+//   - 60-day rolling Spearman correlation between each new signal's symbol
 //     and all currently-held symbols; position size is discounted when
-//     correlation exceeds the configured threshold
+//     correlation exceeds the configured threshold (Task 4.5)
 //
 // Capital allocation (generateOrder):
 //   baseQty     = floor(equity * riskFraction / price)
@@ -44,11 +44,13 @@ struct EquityPoint {
 class Portfolio {
 public:
     explicit Portfolio(double initialCash,
-                       double riskFraction      = 0.10,
-                       double maxSymbolExposure = 0.20,
-                       double maxTotalExposure  = 0.80,
-                       int    correlationWindow = 60,
-                       double correlationThreshold = 0.7);
+                       double riskFraction         = 0.10,
+                       double maxSymbolExposure    = 0.20,
+                       double maxTotalExposure     = 0.80,
+                       int    correlationWindow    = 60,
+                       double correlationThreshold = 0.7,
+                       bool   allowShort           = false,
+                       double shortMarginRate      = 1.0);
 
     // ---- Trade record -------------------------------------------------------
     struct Trade {
@@ -88,6 +90,15 @@ public:
     void exportEquityCurve(const std::string& filename) const;
     void exportTrades     (const std::string& filename) const;
 
+    // ---- Correlation helpers (public for direct unit testing) ---------------
+
+    /// Rank-transform v; tied values receive average rank (1-based).
+    static std::vector<double> rankVector(const std::vector<double>& v);
+
+    /// Spearman rank correlation of the last min(|x|,|y|) elements of x and y.
+    static double spearmanCorr(const std::deque<double>& x,
+                               const std::deque<double>& y);
+
 private:
     double initialCash_;
     double cash_;
@@ -113,6 +124,12 @@ private:
 
     double lastBuyPrice_ = 0.0;
 
+    // ---- Short selling state ------------------------------------------------
+    bool   allowShort_      = false;
+    double shortMarginRate_ = 1.0;
+    /// Price received when each symbol was shorted (for cover P&L calculation).
+    std::unordered_map<std::string, double> shortEntryPrices_;
+
     std::vector<EquityPoint> equityCurve_;
     std::vector<Trade>       trades_;
 
@@ -120,8 +137,8 @@ private:
     double getTotalPositionValue() const;
     double getSymbolPositionValue(const std::string& symbol) const;
 
-    /// Returns the correlation discount factor in [0, 1] to apply to qty.
-    /// 1.0 = no discount, 0.0 = full discount.
+    /// Returns the correlation discount factor in [0.5, 1] to apply to qty.
+    /// 1.0 = no discount; 0.5 = maximum 50% reduction at correlation 1.0.
     double correlationDiscount(const std::string& newSymbol) const;
 
     static double pearsonCorr(const std::deque<double>& x,

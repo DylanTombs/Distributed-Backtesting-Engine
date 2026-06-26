@@ -60,6 +60,13 @@ struct BacktestConfig {
     double buyThreshold  = 0.005; ///< Fractional predicted upside required for LONG
     double exitThreshold = 0.000; ///< Fractional predicted decline required for EXIT
 
+    // ---- Short selling -----------------------------------------------------
+    bool   allowShort      = false; ///< Enable short selling (default: false — backward compatible)
+    double shortMarginRate = 1.0;   ///< Fraction of position value required as margin (100%)
+
+    // ---- Feature schema (Task 4.3) ----------------------------------------
+    std::string featureSchemaPath; ///< Path to feature_schema.json; defaults to "feature_schema.json" when empty
+
     // ---- Logging -----------------------------------------------------------
     std::string logLevel = "info";           ///< trace|debug|info|warn|error|critical
     std::string logFile  = "output/backtest.log"; ///< Log file path (empty = console only)
@@ -95,6 +102,8 @@ struct BacktestConfig {
                 "buyThreshold must be in [0, 0.1]");
         require(exitThreshold >= 0.0 && exitThreshold <= 0.1,
                 "exitThreshold must be in [0, 0.1]");
+        require(shortMarginRate > 0.0 && shortMarginRate <= 2.0,
+                "shortMarginRate must be in (0, 2]");
 
         require(fileExists(modelPt),       "modelPt path does not exist");
         require(fileExists(featScalerCsv), "featScalerCsv path does not exist");
@@ -117,6 +126,9 @@ struct BacktestConfig {
         };
         auto setStr = [&](const std::string& key, std::string& f) {
             if (kv.count(key)) f = kv.at(key);
+        };
+        auto setBool = [&](const std::string& key, bool& f) {
+            if (kv.count(key)) f = (kv.at(key) == "true" || kv.at(key) == "1");
         };
 
         // Paths
@@ -146,6 +158,13 @@ struct BacktestConfig {
         // Signal thresholds
         setDouble("buy_threshold",  cfg.buyThreshold);
         setDouble("exit_threshold", cfg.exitThreshold);
+
+        // Short selling
+        setBool  ("allow_short",       cfg.allowShort);
+        setDouble("short_margin_rate", cfg.shortMarginRate);
+
+        // Feature schema
+        setStr("feature_schema_path", cfg.featureSchemaPath);
 
         // Logging
         setStr("log_level", cfg.logLevel);

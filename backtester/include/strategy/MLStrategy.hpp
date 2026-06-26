@@ -4,7 +4,9 @@
 #include "strategy/ScalerParams.hpp"
 
 #include <deque>
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // LibTorch is optional.  When cmake finds Torch, it defines
@@ -31,14 +33,17 @@
  */
 class MLStrategy : public Strategy {
 public:
+    enum class PositionDirection { FLAT, LONG, SHORT };
+
     /**
      * @param modelPath         Path to models/transformer.pt
      * @param featureScalerPath Path to models/feature_scaler.csv
      * @param targetScalerPath  Path to models/target_scaler.csv
      * @param seqLen            Encoder sequence length (default 30, from exportModel.py)
      * @param nFeatures         Number of model input features (default 34 = encIn)
-     * @param buyThreshold      Minimum predicted upside to trigger a BUY (0.5 %)
+     * @param buyThreshold      Minimum predicted upside to trigger a LONG (0.5 %)
      * @param exitThreshold     Predicted drawdown below which to EXIT (0 = any decline)
+     * @param allowShort        Enable SHORT signals (default: false)
      */
     MLStrategy(const std::string& modelPath,
                const std::string& featureScalerPath,
@@ -46,7 +51,8 @@ public:
                int    seqLen        = 30,
                int    nFeatures     = 34,
                double buyThreshold  = 0.005,
-               double exitThreshold = 0.0);
+               double exitThreshold = 0.0,
+               bool   allowShort    = false);
 
     void onMarketEvent(const MarketEvent& event, EventQueue& queue) override;
 
@@ -55,7 +61,8 @@ private:
     int    nFeatures_;
     double buyThreshold_;
     double exitThreshold_;
-    bool   hasPosition_ = false;
+    bool   allowShort_    = false;
+    PositionDirection positionDir_ = PositionDirection::FLAT;
 
     ScalerParams featureScaler_;
     ScalerParams targetScaler_;
@@ -74,7 +81,13 @@ private:
     double runInference() const;
 
 #ifdef ML_STRATEGY_ENABLED
-    mutable torch::jit::script::Module model_;
+    // Shared across all instances that use the same model path — avoids
+    // loading a large TorchScript file once per symbol.
+    std::shared_ptr<torch::jit::script::Module> model_;
     bool modelLoaded_ = false;
+
+    // Process-wide cache: path → shared loaded module.
+    static std::unordered_map<std::string,
+                              std::shared_ptr<torch::jit::script::Module>> modelCache_;
 #endif
 };
