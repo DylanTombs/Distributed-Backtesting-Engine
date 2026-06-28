@@ -1,6 +1,7 @@
 """Pydantic request/response models for the FastAPI bridge."""
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -48,7 +49,11 @@ class BacktestRequest(BaseModel):
     def tickers_not_empty(cls, v: list[str]) -> list[str]:
         if not v:
             raise ValueError("tickers must not be empty")
-        return [t.upper() for t in v]
+        upcased = [t.upper() for t in v]
+        for t in upcased:
+            if not re.fullmatch(r'[A-Z0-9.\-]{1,7}', t):
+                raise ValueError(f"Invalid ticker symbol: {t!r}")
+        return upcased
 
     @model_validator(mode="after")
     def validate_dates(self) -> "BacktestRequest":
