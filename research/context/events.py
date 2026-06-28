@@ -195,7 +195,7 @@ EVENTS: Dict[str, EventRecord] = {
                   "kyiv attack", "russia sanctions 2022", "nato ukraine"],
         date_start="2022-02-24",
         date_end="2022-03-08",
-        tickers=["URTH", "XOM", "LMT", "RTX", "WHT"],
+        tickers=["URTH", "XOM", "LMT", "RTX", "XLE"],
         description="Russian invasion sparked commodity surge and European equity sell-off.",
         sector="broad market",
     ),
