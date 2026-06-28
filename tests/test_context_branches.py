@@ -116,6 +116,7 @@ class TestLlmPass:
         assert result.event_label == "COVID crash"
         assert "AAPL" in result.tickers
         assert result.source == "llm"
+        assert 0.4 <= result.confidence <= 0.80
 
     def test_strips_markdown_fences(self):
         from research.context.extractor import _llm_pass

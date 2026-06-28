@@ -20,6 +20,7 @@ import math
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from collections import OrderedDict
 from datetime import datetime
@@ -40,6 +41,12 @@ OUTPUT_DIR    = PROJECT_ROOT / "output"
 LOOKBACK_BARS = 60   # bars of history prepended so model has seq_len context
 
 _LRU_MAX = 20
+
+# Serialise binary invocations: the C++ binary always writes ml_equity.csv and
+# ml_trades.csv to PROJECT_ROOT (its CWD), so concurrent requests would race on
+# those files.  The LRU cache lookup remains concurrent — only _execute() is
+# serialised.
+_binary_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +93,8 @@ def run_backtest(
         logger.info("Cache hit for %s", cache_key)
         return BacktestResponse(**{**cached.model_dump(), "cached": True})
 
-    result = _execute(tickers, date_start, date_end)
+    with _binary_lock:
+        result = _execute(tickers, date_start, date_end)
     _cache.put(cache_key, result)
     return result
 
@@ -103,7 +111,7 @@ def _execute(tickers: list[str], date_start: str, date_end: str) -> BacktestResp
         )
 
     # Find the best available symbol with a feature CSV on disk
-    symbol, src_csv = _resolve_symbol(tickers)
+    symbol, src_csv, warning = _resolve_symbol(tickers)
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="tt_backtest_"))
     try:
@@ -111,7 +119,7 @@ def _execute(tickers: list[str], date_start: str, date_end: str) -> BacktestResp
 
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         _run_binary(filtered_csv, symbol)
-        return _archive_and_read(run_id, symbol, date_start, date_end)
+        return _archive_and_read(run_id, symbol, date_start, date_end, warning=warning)
 
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -121,26 +129,31 @@ def _execute(tickers: list[str], date_start: str, date_end: str) -> BacktestResp
 # Symbol resolution
 # ---------------------------------------------------------------------------
 
-def _resolve_symbol(tickers: list[str]) -> tuple[str, Path]:
-    """Return (symbol, feature_csv_path) for the first ticker that has data.
+def _resolve_symbol(tickers: list[str]) -> tuple[str, Path, Optional[str]]:
+    """Return (symbol, feature_csv_path, warning) for the first ticker that has data.
 
-    Falls back to whatever is in DATA_DIR when none of the requested tickers
-    have a matching CSV.
+    Returns warning=None when an exact match is found.  When the fallback is
+    used, warning contains a human-readable description of the substitution so
+    callers can surface it to the user.
     """
     for ticker in tickers:
         candidate = DATA_DIR / f"{ticker}_features.csv"
         if candidate.exists():
             logger.info("Using feature CSV for requested ticker %s", ticker)
-            return ticker, candidate
+            return ticker, candidate, None
 
     # Fallback: use whatever features file exists
     csvs = sorted(DATA_DIR.glob("*_features.csv"))
     if csvs:
         symbol = csvs[0].stem.replace("_features", "")
+        warning_msg = (
+            f"None of the requested tickers {tickers} have feature CSVs. "
+            f"Fell back to '{symbol}'. Results reflect '{symbol}', not the requested ticker(s)."
+        )
         logger.info(
             "None of %s have feature CSVs — falling back to %s", tickers, symbol
         )
-        return symbol, csvs[0]
+        return symbol, csvs[0], warning_msg
 
     raise RuntimeError(
         f"No feature CSVs found in {DATA_DIR}. "
@@ -235,7 +248,8 @@ def _run_binary(feature_csv: Path, symbol: str) -> None:
 # ---------------------------------------------------------------------------
 
 def _archive_and_read(
-    run_id: str, symbol: str, date_start: str, date_end: str
+    run_id: str, symbol: str, date_start: str, date_end: str,
+    warning: Optional[str] = None,
 ) -> BacktestResponse:
     # Binary writes to PROJECT_ROOT (its CWD)
     equity_src = PROJECT_ROOT / "ml_equity.csv"
@@ -261,6 +275,7 @@ def _archive_and_read(
         equity=equity,
         trades=trades,
         cached=False,
+        warning=warning,
     )
 
 
@@ -296,10 +311,13 @@ def _compute_metrics(
             max_dd = dd
 
     # Sharpe (annualised, assumes daily bars, rf=0)
+    # Bessel-corrected sample variance (n-1 denominator) per ADR-015.
     if len(values) > 1:
         rets = [(values[i] - values[i - 1]) / values[i - 1] for i in range(1, len(values))]
-        mean_r = sum(rets) / len(rets)
-        var_r  = sum((r - mean_r) ** 2 for r in rets) / len(rets)
+        n = len(rets)
+        mean_r = sum(rets) / n
+        # Require at least 2 return observations for Bessel correction
+        var_r  = sum((r - mean_r) ** 2 for r in rets) / (n - 1) if n > 1 else 0.0
         std_r  = math.sqrt(var_r) if var_r > 0 else 0.0
         sharpe = (mean_r / std_r * math.sqrt(252)) if std_r > 0 else 0.0
     else:
@@ -344,14 +362,26 @@ def _read_equity(
 ) -> list[EquityPoint]:
     if not path.exists():
         return []
+
+    # Parse datetime bounds once so comparisons are type-safe
+    start_dt = datetime.fromisoformat(date_start) if date_start else None
+    end_dt   = datetime.fromisoformat(date_end)   if date_end   else None
+
+    # Collect all rows first; do not rely on sort order for early termination —
+    # the equity CSV may not be strictly chronological.
     points: list[EquityPoint] = []
     with open(path, newline="") as f:
         for row in csv.DictReader(f):
             ts = row.get("timestamp") or row.get("date") or ""
-            if date_start and ts < date_start:
+            try:
+                row_dt = datetime.fromisoformat(ts)
+            except ValueError:
+                logger.debug("_read_equity: skipping unparseable timestamp %r", ts)
                 continue
-            if date_end and ts > date_end:
-                break
+            if start_dt and row_dt < start_dt:
+                continue
+            if end_dt and row_dt > end_dt:
+                continue
             try:
                 points.append(EquityPoint(date=ts, equity=float(row.get("equity", 0))))
             except (ValueError, TypeError):
@@ -371,7 +401,7 @@ def _read_trades(
             if date_start and ts < date_start:
                 continue
             if date_end and ts > date_end:
-                continue
+                break  # C++ engine writes trades in chronological order; safe to break
             rows.append(dict(row))
     return rows[:500]
 

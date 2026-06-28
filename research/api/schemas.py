@@ -1,8 +1,10 @@
 """Pydantic request/response models for the FastAPI bridge."""
 from __future__ import annotations
 
+import re
+from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +49,29 @@ class BacktestRequest(BaseModel):
     def tickers_not_empty(cls, v: list[str]) -> list[str]:
         if not v:
             raise ValueError("tickers must not be empty")
-        return [t.upper() for t in v]
+        upcased = [t.upper() for t in v]
+        for t in upcased:
+            if not re.fullmatch(r'[A-Z0-9.\-]{1,7}', t):
+                raise ValueError(f"Invalid ticker symbol: {t!r}")
+        return upcased
+
+    @model_validator(mode="after")
+    def validate_dates(self) -> "BacktestRequest":
+        try:
+            start_dt = datetime.fromisoformat(self.date_start)
+        except ValueError:
+            raise ValueError(
+                f"date_start {self.date_start!r} is not a valid ISO 8601 date"
+            )
+        try:
+            end_dt = datetime.fromisoformat(self.date_end)
+        except ValueError:
+            raise ValueError(
+                f"date_end {self.date_end!r} is not a valid ISO 8601 date"
+            )
+        if start_dt > end_dt:
+            raise ValueError("date_start must be before date_end")
+        return self
 
 
 class EquityPoint(BaseModel):
@@ -61,6 +85,7 @@ class BacktestResponse(BaseModel):
     equity: list[EquityPoint]
     trades: list[dict]
     cached: bool = False
+    warning: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

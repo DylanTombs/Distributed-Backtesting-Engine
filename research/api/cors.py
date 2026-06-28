@@ -1,10 +1,9 @@
 """CORS middleware configuration.
 
 Allows requests only from the Chrome extension runtime and localhost origins.
-The extension's ``fetch()`` calls arrive with an ``Origin`` of
-``chrome-extension://<id>`` or ``null`` (for popup pages); both must be
-allowed. The ``*`` wildcard is intentionally avoided — the API binds to
-localhost only in development.
+The extension's ``fetch()`` calls arrive from a ``chrome-extension://`` origin
+covered by ``_ALLOWED_ORIGIN_REGEX``.  The ``*`` wildcard is intentionally
+avoided — the API binds to localhost only in development.
 """
 from __future__ import annotations
 
@@ -19,7 +18,8 @@ _ALLOWED_ORIGINS = [
     "http://localhost:8502",   # API self-calls
     "http://127.0.0.1:8501",
     "http://127.0.0.1:8502",
-    "null",                    # extension popup pages
+    # "null" removed: extension requests go through background.js (service
+    # worker) which sends a chrome-extension:// origin, covered by the regex.
 ]
 
 _ALLOWED_ORIGIN_REGEX = r"chrome-extension://.*"

@@ -161,12 +161,24 @@ def _llm_pass(text: str) -> Optional[ExtractionResult]:
     if isinstance(tickers, str):
         tickers = [tickers]
 
+    confidence = 0.4
+    if data.get("event_label"):
+        confidence += 0.10
+    if data.get("date_start"):
+        confidence += 0.15
+    if data.get("date_end"):
+        confidence += 0.05
+    if tickers:
+        confidence += 0.10
+    # cap at 0.80 for LLM pass (rules+llm can exceed this in the merge)
+    confidence = min(confidence, 0.80)
+
     return ExtractionResult(
         event_label=data.get("event_label"),
         event_key=None,
         tickers=[t.upper() for t in tickers][:10],
         date_start=data.get("date_start"),
         date_end=data.get("date_end"),
-        confidence=0.75,
+        confidence=confidence,
         source="llm",
     )

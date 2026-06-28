@@ -1,6 +1,8 @@
 # Phase 6 — Contextual Backtest Browser Extension
 
-**Status:** Planning  
+**Status:** Complete  
+**Closed:** 2026-06-28  
+**Summary:** Browser extension ships end-to-end — FAB on financial pages, two-pass context extraction, C++ backtest via FastAPI bridge, equity chart + metrics in popup, configurable API/dashboard URLs, 41-event database, 15 audit findings resolved.
 **Prerequisites:** Phase 5 (dashboard + archive infrastructure)  
 **Ambition level:** High — first cross-boundary integration between the web and the backtester
 
@@ -275,16 +277,16 @@ No new C++ dependencies. The extension is vanilla JS — no build step (no npm/w
 
 ## Exit Criteria
 
-- [ ] `POST /api/context` correctly extracts tickers + date range from a Bloomberg or Reuters article URL in < 3 s
-- [ ] `POST /api/backtest` returns equity curve + metrics for a known event window in < 15 s (model pre-loaded)
-- [ ] Extension popup opens, shows extracted context, and runs a backtest without leaving the page
-- [ ] "Quick Picks" dropdown lists all events from the event database
-- [ ] Rule-based extraction handles ≥ 3 of: COVID crash, GFC, dot-com, a Fed rate decision, a single-stock earnings event — without LLM fallback
-- [ ] LLM fallback (Claude Haiku) activates and returns structured output when rule-based confidence < 0.6
-- [ ] "Open in Dashboard →" link lands on the correct run in the Streamlit dashboard
-- [ ] Page overlay (Mode B) renders without breaking the host page's layout
-- [ ] `docker compose up` brings up `api` service and extension can reach it
-- [ ] All extraction and API logic covered by unit tests (≥ 80%); extension JS not counted
+- [x] `POST /api/context` correctly extracts tickers + date range from a Bloomberg or Reuters article URL in < 3 s
+- [x] `POST /api/backtest` returns equity curve + metrics for a known event window in < 15 s (model pre-loaded)
+- [x] Extension popup opens, shows extracted context, and runs a backtest without leaving the page
+- [x] "Quick Picks" dropdown lists all events from the event database
+- [x] Rule-based extraction handles ≥ 3 of: COVID crash, GFC, dot-com, a Fed rate decision, a single-stock earnings event — without LLM fallback
+- [x] LLM fallback (Claude Haiku) activates and returns structured output when rule-based confidence < 0.6
+- [x] "Open in Dashboard →" link lands on the correct run in the Streamlit dashboard
+- [x] Page overlay (Mode B) renders without breaking the host page's layout
+- [x] `docker compose up` brings up `api` service and extension can reach it
+- [x] All extraction and API logic covered by unit tests (≥ 80%); extension JS not counted
 
 ---
 

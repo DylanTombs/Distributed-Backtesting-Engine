@@ -13,7 +13,16 @@
  *   { type: "SET_CACHED_RESULT", payload: { tabId, result } }
  */
 
-const API_BASE = "http://localhost:8502";
+const DEFAULTS = {
+  apiBase:       "http://localhost:8502",
+  dashboardBase: "http://localhost:8501",
+};
+
+async function getSettings() {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get(DEFAULTS, resolve);
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Message router
@@ -58,9 +67,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }),
       })
         .then((result) => {
-          // Cache per tab so re-opening popup is instant
-          if (tabId) {
-            chrome.storage.session.set({ [`result_${tabId}`]: result });
+          // Cache per tab so re-opening popup is instant.
+          // Popup messages arrive with sender.tab === undefined, so we fall
+          // back to the tabId included in the payload by popup.js.
+          const cacheTabId = msg.payload.tabId ?? tabId;
+          if (cacheTabId) {
+            chrome.storage.session.set({ [`result_${cacheTabId}`]: result });
           }
           sendResponse(result);
         })
@@ -99,7 +111,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ---------------------------------------------------------------------------
 
 async function fetchApi(path, options = {}) {
-  const url = `${API_BASE}${path}`;
+  const { apiBase } = await getSettings();
+  const url = `${apiBase}${path}`;
   const resp = await fetch(url, {
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     ...options,

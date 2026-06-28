@@ -284,6 +284,26 @@ A record of key architectural and implementation decisions. Ordered by subsystem
 - Adds a `joblib` dependency for a relatively simple use case. Justified by the existing dependency and the reduction in boilerplate.
 - `loky` spawns a new process pool per `Parallel(...)` call. For a CLI tool this is fine; for a long-running service it would be inefficient.
 
+### ADR-030: Financial page detection via domain allowlist + ticker regex
+
+**Decision:** `content.js` checks `isFinancialPage()` before injecting the FAB. Detection is: domain in a curated allowlist OR ≥2 ticker matches from a 30-ticker sample regex.
+
+**Rationale:** Injecting on all pages creates noise and broadens the attack surface. The dual check (domain OR ticker count) catches well-known financial sites instantly and also works on non-listed sites discussing markets.
+
+**Trade-offs:** The 30-ticker sample will miss pages about less common stocks. Users can still open the popup via the toolbar icon on any page — the FAB is just the shortcut. The domain list is a hardcoded constant; it could be made user-configurable in a future settings page.
+
+---
+
+### ADR-029: tabId passed in message payload for session caching
+
+**Decision:** `popup.js` includes `tabId: currentTabId` in the `RUN_BACKTEST` message payload. `background.js` uses `msg.payload.tabId ?? sender.tab?.id` as the cache key.
+
+**Rationale:** Messages from extension popup pages arrive with `sender.tab === undefined` because the popup is not a content script. Without an explicit tabId in the payload, the cache key was always undefined and no results were ever stored.
+
+**Trade-offs:** The popup must correctly obtain `currentTabId` from `chrome.tabs.query` before sending. This is already done at init time.
+
+---
+
 ### ADR-026: Regex-based JSON parser for feature schema (no nlohmann/json dependency)
 
 **Decision:** `FeatureSchema::loadFromJSON()` extracts `"name"` values from the schema file using a single `std::regex` rather than adding a JSON library dependency.
@@ -293,3 +313,50 @@ A record of key architectural and implementation decisions. Ordered by subsystem
 **Trade-offs:**
 - The parser is brittle to non-standard JSON formatting (e.g., multi-line string values, escaped quotes in names). Acceptable given we generate the file ourselves.
 - If the schema evolves to carry structured data (constraints, versioning rules), switch to a proper JSON library at that point.
+
+---
+
+## FastAPI Bridge
+
+### ADR-027: threading.Lock to serialise ml_backtest invocations
+
+**Decision:** A module-level `threading.Lock` in `runner.py` wraps `_execute()` calls so only one binary invocation runs at a time.
+
+**Rationale:** The C++ binary always writes `ml_equity.csv` and `ml_trades.csv` to a fixed path (its CWD = PROJECT_ROOT). FastAPI runs synchronous route handlers in a thread pool, making concurrent writes possible. A lock prevents two requests from reading each other's output files.
+
+**Trade-offs:** Serialises all backtest requests. Acceptable because the binary typically completes in < 15 s; queue depth in real use is near zero. A per-run output directory would be preferable if the binary ever gains an `--output-dir` flag.
+
+---
+
+### ADR-028: Ticker substitution warning field over RuntimeError
+
+**Decision:** When `_resolve_symbol` falls back to a CSV that doesn't match any requested ticker, it returns a `warning` string rather than raising. The warning propagates to `BacktestResponse.warning`.
+
+**Rationale:** Raising would block the user from getting any result. The fallback is still useful (some backtest is better than a hard error) as long as the substitution is visible. The popup can surface the warning message to the user.
+
+**Trade-offs:** Users must read the warning; the result isn't blocked. If the API is extended to require exact ticker matching, `warning` can be promoted to an error at that point.
+
+---
+
+## Context Extraction
+
+### ADR-031: Proportional LLM confidence scoring
+
+**Decision:** `_llm_pass()` computes confidence as `0.4 + 0.10*event_label + 0.15*date_start + 0.05*date_end + 0.10*tickers`, capped at 0.80.
+
+**Rationale:** A hardcoded 0.75 caused LLM responses with all-null fields to artificially boost the merged confidence score above a high-quality rule-based result. Proportional scoring ensures a null-heavy LLM response contributes appropriately to the merge.
+
+**Trade-offs:** The weights are heuristic. The 0.80 cap reserves the 0.80–1.0 range for future high-confidence signals (e.g., exact event key match + verified dates).
+
+---
+
+### ADR-032: Ticker symbol character allowlist for path traversal prevention
+
+**Decision:** `BacktestRequest` validates each ticker against `re.fullmatch(r'[A-Z0-9.\-]{1,7}', t)` before it reaches filesystem path construction.
+
+**Rationale:** `_resolve_symbol` constructs `DATA_DIR / f"{ticker}_features.csv"` using pathlib. A ticker containing `../` components could escape `DATA_DIR` to probe for arbitrary CSV files. Since all valid US ticker symbols are 1–7 alphanumeric characters (plus `.` for BRK.A style and `-` for preferred share classes), the regex is both a security control and a data quality guard.
+
+**Trade-offs:**
+- Rejects any ticker not matching `[A-Z0-9.\-]{1,7}`. The allowlist covers BRK.A/BRK.B (dot) and share classes like BRK-B (hyphen); lower-case or special-character inputs are explicitly blocked.
+- The 7-character limit covers all NASDAQ/NYSE symbols including ETFs (e.g. `ARKFINX` at 7 chars).
+- Validation fires at the API boundary (Pydantic validator), so the C++ binary never receives an unsanitised ticker string.

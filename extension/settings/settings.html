@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>TradingTransformer Settings</title>
+  <style>
+    body { font-family: system-ui; background: #0f172a; color: #e2e8f0; padding: 24px; max-width: 480px; }
+    label { display: block; margin-top: 16px; font-size: 13px; color: #94a3b8; }
+    input { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px; background: #1e293b; border: 1px solid #334155; border-radius: 6px; color: #e2e8f0; font-size: 14px; }
+    button { margin-top: 20px; padding: 8px 20px; background: #0ea5e9; border: none; border-radius: 6px; color: white; cursor: pointer; font-size: 14px; }
+    #status { margin-top: 12px; font-size: 13px; color: #4ade80; min-height: 18px; }
+  </style>
+</head>
+<body>
+  <h2 style="margin:0 0 4px;color:#38bdf8">TradingTransformer</h2>
+  <p style="margin:0 0 20px;color:#64748b;font-size:13px">API and dashboard connection settings</p>
+  <label>API Base URL
+    <input id="api-base" type="text" placeholder="http://localhost:8502">
+  </label>
+  <label>Dashboard Base URL
+    <input id="dashboard-base" type="text" placeholder="http://localhost:8501">
+  </label>
+  <button id="save">Save</button>
+  <div id="status"></div>
+  <script src="settings.js"></script>
+</body>
+</html>
