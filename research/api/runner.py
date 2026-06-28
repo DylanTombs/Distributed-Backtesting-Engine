@@ -359,14 +359,26 @@ def _read_equity(
 ) -> list[EquityPoint]:
     if not path.exists():
         return []
+
+    # Parse datetime bounds once so comparisons are type-safe
+    start_dt = datetime.fromisoformat(date_start) if date_start else None
+    end_dt   = datetime.fromisoformat(date_end)   if date_end   else None
+
+    # Collect all rows first; do not rely on sort order for early termination —
+    # the equity CSV may not be strictly chronological.
     points: list[EquityPoint] = []
     with open(path, newline="") as f:
         for row in csv.DictReader(f):
             ts = row.get("timestamp") or row.get("date") or ""
-            if date_start and ts < date_start:
+            try:
+                row_dt = datetime.fromisoformat(ts)
+            except ValueError:
+                logger.debug("_read_equity: skipping unparseable timestamp %r", ts)
                 continue
-            if date_end and ts > date_end:
-                break
+            if start_dt and row_dt < start_dt:
+                continue
+            if end_dt and row_dt > end_dt:
+                continue
             try:
                 points.append(EquityPoint(date=ts, equity=float(row.get("equity", 0))))
             except (ValueError, TypeError):
