@@ -360,3 +360,17 @@ A record of key architectural and implementation decisions. Ordered by subsystem
 - Rejects any ticker not matching `[A-Z0-9.\-]{1,7}`. The allowlist covers BRK.A/BRK.B (dot) and share classes like BRK-B (hyphen); lower-case or special-character inputs are explicitly blocked.
 - The 7-character limit covers all NASDAQ/NYSE symbols including ETFs (e.g. `ARKFINX` at 7 chars).
 - Validation fires at the API boundary (Pydantic validator), so the C++ binary never receives an unsanitised ticker string.
+
+---
+
+### ADR-033: Startup LRU cache pre-warm for all curated events
+
+**Decision:** At FastAPI startup (via the `lifespan` context manager) a daemon thread calls `warmup_cache()`, which iterates all 41 entries in `EVENTS` and calls `run_backtest()` for each. `_LRU_MAX` is raised from 20 to 50 so all 41 events fit without eviction.
+
+**Rationale:** End-to-end latency profiling showed the `ml_backtest` C++ binary accounts for 85–90 % of per-request wall time (~3–4 s each). The EVENTS dict represents the complete set of user-accessible Quick Picks, so warming them all at startup converts the first user request for any known event from a 3–4 s blocking wait to a sub-millisecond cache lookup.
+
+**Trade-offs:**
+- Startup adds a background burst of up to 41 × 3.5 s ≈ 142 s of binary invocations. These are serialised by `_binary_lock`, so the server stays responsive for live requests; the warm-up just proceeds concurrently in the daemon thread.
+- If the binary is missing or model weights are absent (common in CI / development), every warm-up attempt raises and is logged at DEBUG level — no noisy errors, no crash.
+- LRU size 50 gives 9 slots of headroom above the 41 curated events for ad-hoc user queries before eviction begins.
+- The daemon thread is fire-and-forget; if the server restarts before warm-up completes the in-progress run exits cleanly (daemon=True).
