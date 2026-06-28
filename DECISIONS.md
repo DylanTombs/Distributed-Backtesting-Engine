@@ -374,3 +374,65 @@ A record of key architectural and implementation decisions. Ordered by subsystem
 - If the binary is missing or model weights are absent (common in CI / development), every warm-up attempt raises and is logged at DEBUG level — no noisy errors, no crash.
 - LRU size 50 gives 9 slots of headroom above the 41 curated events for ad-hoc user queries before eviction begins.
 - The daemon thread is fire-and-forget; if the server restarts before warm-up completes the in-progress run exits cleanly (daemon=True).
+
+---
+
+### ADR-034: Two-pass context extraction — rule-based first, LLM fallback at confidence < 0.6
+
+**Decision:** `extractor.py` runs a fast rule-based pass first (keyword match against the curated event database, ticker regex over an S&P 500 allow-list, `dateparser` date resolution). If the resulting confidence score is below 0.6, a second pass calls Claude Haiku 4.5 with a structured-output prompt over the first 1 500 characters of the page text.
+
+**Rationale:** The rule-based pass handles ~80 % of real-world inputs (well-known crash names, recognisable tickers, year references) with zero API cost and sub-millisecond latency. The LLM fallback exists for ambiguous pages — niche events, unfamiliar sector terms, or non-English date phrasing — where pattern matching cannot reach acceptable confidence. Haiku 4.5 is chosen for the fallback: it is the cheapest Claude model with sufficient instruction-following for structured JSON extraction, keeping per-request cost at roughly $0.001.
+
+The 0.6 threshold is calibrated so that:
+- A single strong keyword match (score 0.55) still triggers the LLM (possible mis-match).
+- A keyword match with corroborating tickers (score ≥ 0.65) bypasses the LLM (clear signal).
+- The LLM is skipped entirely if `ANTHROPIC_API_KEY` is not set, gracefully degrading to rule-only extraction.
+
+**Trade-offs:**
+- The 0.6 threshold is heuristic. Pages about obscure events that happen to share keywords with curated events may incorrectly skip the LLM fallback.
+- LLM results are merged with rule results rather than replacing them: the LLM provides event label and dates; tickers fall back to rule results if the LLM returns none. Merged confidence is `max(rule, llm)`, not the sum, to prevent artificial inflation.
+
+---
+
+### ADR-037: Sorted tickers in LRU cache key for order-invariant cache hits
+
+**Decision:** The LRU cache key in `runner.py` is `f"{','.join(sorted(tickers))}|{date_start}|{date_end}"`. The ticker list is sorted before joining.
+
+**Rationale:** The same backtest can be requested with tickers in different orders depending on the code path: a quick-pick event delivers tickers in database insertion order; the context extractor delivers them in document-mention order. Without sorting, `["AAPL", "MSFT"]` and `["MSFT", "AAPL"]` would produce separate cache entries for an identical computation. Sorting normalises the key to a canonical form so both paths hit the same cached result.
+
+**Trade-offs:**
+- Ticker order has no semantic meaning for the backtester (each ticker is resolved to one feature CSV via `_resolve_symbol`; the first match wins). If a multi-ticker execution path is added in future, verify that sorted order remains semantically neutral for that path.
+
+---
+
+## Chrome Extension
+
+### ADR-035: All API calls routed through service worker; null removed from CORS
+
+**Decision:** `popup.js` and `content.js` never call the FastAPI bridge directly. All network requests go through `background.js` (the Manifest V3 service worker) via `chrome.runtime.sendMessage`. Separately, `"null"` was removed from `_ALLOWED_ORIGINS` in `cors.py`; the regex `chrome-extension://.*` covers extension requests instead.
+
+**Rationale:** Two related security concerns:
+
+1. **Host permissions scoping.** Only `background.js` declares `host_permissions` for `localhost:8502`. Content scripts and popup pages have no direct network access to the API. This limits the blast radius if either a content-script injection vulnerability or a popup XSS is ever exploited — neither can reach the API without going through the service worker's controlled message interface.
+
+2. **`null` origin is unsafe.** The `"null"` string in a CORS `allow_origins` list permits requests from *any* null-origin page — sandboxed `<iframe>` elements, `file://` pages, or `data:` URIs — not just extension popups. Extension popup pages served over `chrome-extension://` origins are already covered by `_ALLOWED_ORIGIN_REGEX`. Removing `"null"` eliminates the broader hole without breaking legitimate extension use.
+
+The regex `chrome-extension://.*` is intentionally a wildcard over the extension ID rather than pinning to a specific ID. Extension IDs differ between developer-mode sideloaded installs and Chrome Web Store published installs, and change whenever the extension is re-sideloaded into a clean Chrome profile. Pinning would require updating `cors.py` on every environment change. Since the API binds only to localhost, the wildcard does not materially expand the attack surface.
+
+**Trade-offs:**
+- Routing through the service worker adds one round-trip through Chrome's internal messaging bus (~1 ms). Negligible compared to backtest latency.
+- The extension ID wildcard means any locally installed extension that knows the API port could call it. Mitigated by the localhost-only binding — a remote attacker cannot reach the API.
+
+---
+
+### ADR-036: chrome.storage.sync for user-configurable API and dashboard URLs
+
+**Decision:** User-configurable settings (API base URL, dashboard base URL) are stored in `chrome.storage.sync`, not `chrome.storage.local`.
+
+**Rationale:** A user who runs TradingTransformer on both a home Mac and a work Mac (sharing a Chrome profile via Google sync) should not need to re-enter their custom server URLs on each machine. `storage.sync` propagates changes automatically across devices signed into the same Google account.
+
+The stored data is two URL strings totalling well under 100 bytes. `storage.sync` allows 8 KB of total data and 102.4 KB/hour write throughput — both constraints are irrelevant for this use case.
+
+**Trade-offs:**
+- `storage.sync` data is visible to Google's sync infrastructure; however, the values are non-sensitive server URLs (localhost addresses by default), not credentials.
+- On Chrome profiles without a signed-in Google account, `storage.sync` behaves identically to `storage.local` — no functionality is lost.
