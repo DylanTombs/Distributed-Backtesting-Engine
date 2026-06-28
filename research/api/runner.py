@@ -401,7 +401,7 @@ def _read_trades(
             if date_start and ts < date_start:
                 continue
             if date_end and ts > date_end:
-                continue
+                break  # C++ engine writes trades in chronological order; safe to break
             rows.append(dict(row))
     return rows[:500]
 
