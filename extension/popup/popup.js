@@ -67,7 +67,9 @@ let allEvents      = [];     // EventSummary[] from GET /api/events
 
   // 4. Extract context from page (sends raw text from the active tab)
   await detectContext(tab);
-})();
+})().catch((err) => {
+  showMsg(`Initialisation error: ${err.message}`, "error");
+});
 
 // ---------------------------------------------------------------------------
 // Context detection
@@ -128,6 +130,7 @@ function applyContext(ctx) {
 // Event dropdown
 // ---------------------------------------------------------------------------
 function populateEventDropdown(events) {
+  if (!Array.isArray(events)) return;
   const placeholder = document.createElement("option");
   placeholder.value = "";
   placeholder.textContent = "— Quick pick event —";
