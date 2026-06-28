@@ -58,9 +58,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }),
       })
         .then((result) => {
-          // Cache per tab so re-opening popup is instant
-          if (tabId) {
-            chrome.storage.session.set({ [`result_${tabId}`]: result });
+          // Cache per tab so re-opening popup is instant.
+          // Popup messages arrive with sender.tab === undefined, so we fall
+          // back to the tabId included in the payload by popup.js.
+          const cacheTabId = msg.payload.tabId ?? tabId;
+          if (cacheTabId) {
+            chrome.storage.session.set({ [`result_${cacheTabId}`]: result });
           }
           sendResponse(result);
         })

@@ -194,6 +194,7 @@ btnRun.addEventListener("click", async () => {
     dateStart: dateStart.value,
     dateEnd:   dateEnd.value,
     skipTrain: true,
+    tabId:     currentTabId,
   });
 
   btnRun.classList.remove("loading");

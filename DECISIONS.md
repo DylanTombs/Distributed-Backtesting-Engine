@@ -284,6 +284,16 @@ A record of key architectural and implementation decisions. Ordered by subsystem
 - Adds a `joblib` dependency for a relatively simple use case. Justified by the existing dependency and the reduction in boilerplate.
 - `loky` spawns a new process pool per `Parallel(...)` call. For a CLI tool this is fine; for a long-running service it would be inefficient.
 
+### ADR-029: tabId passed in message payload for session caching
+
+**Decision:** `popup.js` includes `tabId: currentTabId` in the `RUN_BACKTEST` message payload. `background.js` uses `msg.payload.tabId ?? sender.tab?.id` as the cache key.
+
+**Rationale:** Messages from extension popup pages arrive with `sender.tab === undefined` because the popup is not a content script. Without an explicit tabId in the payload, the cache key was always undefined and no results were ever stored.
+
+**Trade-offs:** The popup must correctly obtain `currentTabId` from `chrome.tabs.query` before sending. This is already done at init time.
+
+---
+
 ### ADR-026: Regex-based JSON parser for feature schema (no nlohmann/json dependency)
 
 **Decision:** `FeatureSchema::loadFromJSON()` extracts `"name"` values from the schema file using a single `std::regex` rather than adding a JSON library dependency.
