@@ -67,7 +67,9 @@ let allEvents      = [];     // EventSummary[] from GET /api/events
 
   // 4. Extract context from page (sends raw text from the active tab)
   await detectContext(tab);
-})();
+})().catch((err) => {
+  showMsg(`Initialisation error: ${err.message}`, "error");
+});
 
 // ---------------------------------------------------------------------------
 // Context detection
@@ -128,6 +130,7 @@ function applyContext(ctx) {
 // Event dropdown
 // ---------------------------------------------------------------------------
 function populateEventDropdown(events) {
+  if (!Array.isArray(events)) return;
   const placeholder = document.createElement("option");
   placeholder.value = "";
   placeholder.textContent = "— Quick pick event —";
@@ -194,6 +197,7 @@ btnRun.addEventListener("click", async () => {
     dateStart: dateStart.value,
     dateEnd:   dateEnd.value,
     skipTrain: true,
+    tabId:     currentTabId,
   });
 
   btnRun.classList.remove("loading");
@@ -241,7 +245,9 @@ function renderResults(result) {
 
   // Dashboard link
   if (result.run_id) {
-    linkDashboard.href = `http://localhost:8501?run_id=${result.run_id}`;
+    chrome.storage.sync.get({ dashboardBase: "http://localhost:8501" }, ({ dashboardBase }) => {
+      linkDashboard.href = `${dashboardBase}?run_id=${result.run_id}`;
+    });
     linkDashboard.style.display = "block";
   }
 }

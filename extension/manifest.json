@@ -6,6 +6,7 @@
 
   "permissions": [
     "activeTab",
+    "scripting",
     "storage"
   ],
 
@@ -25,6 +26,8 @@
       "run_at": "document_idle"
     }
   ],
+
+  "options_page": "settings/settings.html",
 
   "action": {
     "default_popup": "popup/popup.html",
