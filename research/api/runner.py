@@ -311,10 +311,13 @@ def _compute_metrics(
             max_dd = dd
 
     # Sharpe (annualised, assumes daily bars, rf=0)
+    # Bessel-corrected sample variance (n-1 denominator) per ADR-015.
     if len(values) > 1:
         rets = [(values[i] - values[i - 1]) / values[i - 1] for i in range(1, len(values))]
-        mean_r = sum(rets) / len(rets)
-        var_r  = sum((r - mean_r) ** 2 for r in rets) / len(rets)
+        n = len(rets)
+        mean_r = sum(rets) / n
+        # Require at least 2 return observations for Bessel correction
+        var_r  = sum((r - mean_r) ** 2 for r in rets) / (n - 1) if n > 1 else 0.0
         std_r  = math.sqrt(var_r) if var_r > 0 else 0.0
         sharpe = (mean_r / std_r * math.sqrt(252)) if std_r > 0 else 0.0
     else:
