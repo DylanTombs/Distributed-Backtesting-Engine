@@ -82,3 +82,33 @@ services:
       - --server.port=8501
       - --server.address=0.0.0.0
       - --server.headless=true
+
+  # ---------------------------------------------------------------------------
+  # api: FastAPI bridge for the browser extension (http://localhost:8502)
+  #
+  # Wraps the backtester so the Chrome extension can call it via REST.
+  # Requires models/transformer.pt — run the pipeline service first.
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.python
+    image: tradingtransformer-api:latest
+    ports:
+      - "8502:8502"
+    volumes:
+      - ./output:/app/output
+      - ./models:/app/models:ro
+      - ./backtest_config.yaml:/app/backtest_config.yaml
+      - ./data:/app/data:ro
+      - ./features:/app/features:ro
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    depends_on:
+      - pipeline
+    command:
+      - uvicorn
+      - research.api.app:app
+      - --host=0.0.0.0
+      - --port=8502
+      - --workers=1

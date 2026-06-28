@@ -10,6 +10,7 @@ omit =
     research/analysis/EquityCurve.py
     research/dashboard/app.py
     research/dashboard/pages/*.py
+    research/api/runner.py
 
 [report]
 fail_under = 80
