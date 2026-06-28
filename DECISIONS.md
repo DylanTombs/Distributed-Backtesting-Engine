@@ -316,6 +316,8 @@ A record of key architectural and implementation decisions. Ordered by subsystem
 
 ---
 
+## FastAPI Bridge
+
 ### ADR-027: threading.Lock to serialise ml_backtest invocations
 
 **Decision:** A module-level `threading.Lock` in `runner.py` wraps `_execute()` calls so only one binary invocation runs at a time.
@@ -333,3 +335,15 @@ A record of key architectural and implementation decisions. Ordered by subsystem
 **Rationale:** Raising would block the user from getting any result. The fallback is still useful (some backtest is better than a hard error) as long as the substitution is visible. The popup can surface the warning message to the user.
 
 **Trade-offs:** Users must read the warning; the result isn't blocked. If the API is extended to require exact ticker matching, `warning` can be promoted to an error at that point.
+
+---
+
+## Context Extraction
+
+### ADR-031: Proportional LLM confidence scoring
+
+**Decision:** `_llm_pass()` computes confidence as `0.4 + 0.10*event_label + 0.15*date_start + 0.05*date_end + 0.10*tickers`, capped at 0.80.
+
+**Rationale:** A hardcoded 0.75 caused LLM responses with all-null fields to artificially boost the merged confidence score above a high-quality rule-based result. Proportional scoring ensures a null-heavy LLM response contributes appropriately to the merge.
+
+**Trade-offs:** The weights are heuristic. The 0.80 cap reserves the 0.80–1.0 range for future high-confidence signals (e.g., exact event key match + verified dates).
