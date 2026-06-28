@@ -1,5 +1,5 @@
 /**
- * content.js — injects a persistent floating action button on every page.
+ * content.js — injects a persistent floating action button on financial pages.
  *
  * Clicking the FAB opens the extension popup (Chrome doesn't allow scripts to
  * open popups directly, so we open it as a side panel via chrome.action.openPopup
@@ -8,7 +8,28 @@
 
 const FAB_ID = "tt-fab";
 
+// ---------------------------------------------------------------------------
+// Financial page detection
+// ---------------------------------------------------------------------------
+
+const FINANCIAL_DOMAINS = new Set([
+  "bloomberg.com", "reuters.com", "ft.com", "wsj.com",
+  "cnbc.com", "marketwatch.com", "finance.yahoo.com",
+  "seekingalpha.com", "barrons.com", "fool.com", "investing.com",
+]);
+
+const TICKER_SAMPLE = /\b(AAPL|MSFT|GOOGL|AMZN|NVDA|META|TSLA|JPM|BAC|GS|XOM|CVX|NFLX|AMD|INTC|CSCO|WMT|HD|UNH|V|MA|PG|KO|PEP|ABBV|LLY|JNJ|MRK|AVGO|CRM)\b/g;
+
+function isFinancialPage() {
+  const host = location.hostname.replace(/^www\./, "");
+  if (FINANCIAL_DOMAINS.has(host)) return true;
+  const text = document.body?.innerText ?? "";
+  const matches = text.match(TICKER_SAMPLE) ?? [];
+  return matches.length >= 2;
+}
+
 function injectFab() {
+  if (!isFinancialPage()) return;
   if (document.getElementById(FAB_ID)) return;
 
   const fab = document.createElement("button");

@@ -284,6 +284,16 @@ A record of key architectural and implementation decisions. Ordered by subsystem
 - Adds a `joblib` dependency for a relatively simple use case. Justified by the existing dependency and the reduction in boilerplate.
 - `loky` spawns a new process pool per `Parallel(...)` call. For a CLI tool this is fine; for a long-running service it would be inefficient.
 
+### ADR-030: Financial page detection via domain allowlist + ticker regex
+
+**Decision:** `content.js` checks `isFinancialPage()` before injecting the FAB. Detection is: domain in a curated allowlist OR ≥2 ticker matches from a 30-ticker sample regex.
+
+**Rationale:** Injecting on all pages creates noise and broadens the attack surface. The dual check (domain OR ticker count) catches well-known financial sites instantly and also works on non-listed sites discussing markets.
+
+**Trade-offs:** The 30-ticker sample will miss pages about less common stocks. Users can still open the popup via the toolbar icon on any page — the FAB is just the shortcut. The domain list is a hardcoded constant; it could be made user-configurable in a future settings page.
+
+---
+
 ### ADR-029: tabId passed in message payload for session caching
 
 **Decision:** `popup.js` includes `tabId: currentTabId` in the `RUN_BACKTEST` message payload. `background.js` uses `msg.payload.tabId ?? sender.tab?.id` as the cache key.
