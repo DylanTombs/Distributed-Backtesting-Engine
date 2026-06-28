@@ -347,3 +347,16 @@ A record of key architectural and implementation decisions. Ordered by subsystem
 **Rationale:** A hardcoded 0.75 caused LLM responses with all-null fields to artificially boost the merged confidence score above a high-quality rule-based result. Proportional scoring ensures a null-heavy LLM response contributes appropriately to the merge.
 
 **Trade-offs:** The weights are heuristic. The 0.80 cap reserves the 0.80–1.0 range for future high-confidence signals (e.g., exact event key match + verified dates).
+
+---
+
+### ADR-032: Ticker symbol character allowlist for path traversal prevention
+
+**Decision:** `BacktestRequest` validates each ticker against `re.fullmatch(r'[A-Z0-9.\-]{1,7}', t)` before it reaches filesystem path construction.
+
+**Rationale:** `_resolve_symbol` constructs `DATA_DIR / f"{ticker}_features.csv"` using pathlib. A ticker containing `../` components could escape `DATA_DIR` to probe for arbitrary CSV files. Since all valid US ticker symbols are 1–7 alphanumeric characters (plus `.` for BRK.A style and `-` for preferred share classes), the regex is both a security control and a data quality guard.
+
+**Trade-offs:**
+- Rejects any ticker not matching `[A-Z0-9.\-]{1,7}`. The allowlist covers BRK.A/BRK.B (dot) and share classes like BRK-B (hyphen); lower-case or special-character inputs are explicitly blocked.
+- The 7-character limit covers all NASDAQ/NYSE symbols including ETFs (e.g. `ARKFINX` at 7 chars).
+- Validation fires at the API boundary (Pydantic validator), so the C++ binary never receives an unsanitised ticker string.
