@@ -61,6 +61,7 @@ class BacktestResponse(BaseModel):
     equity: list[EquityPoint]
     trades: list[dict]
     cached: bool = False
+    warning: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

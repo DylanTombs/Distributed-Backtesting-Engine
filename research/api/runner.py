@@ -111,7 +111,7 @@ def _execute(tickers: list[str], date_start: str, date_end: str) -> BacktestResp
         )
 
     # Find the best available symbol with a feature CSV on disk
-    symbol, src_csv = _resolve_symbol(tickers)
+    symbol, src_csv, warning = _resolve_symbol(tickers)
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="tt_backtest_"))
     try:
@@ -119,7 +119,7 @@ def _execute(tickers: list[str], date_start: str, date_end: str) -> BacktestResp
 
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         _run_binary(filtered_csv, symbol)
-        return _archive_and_read(run_id, symbol, date_start, date_end)
+        return _archive_and_read(run_id, symbol, date_start, date_end, warning=warning)
 
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -129,26 +129,31 @@ def _execute(tickers: list[str], date_start: str, date_end: str) -> BacktestResp
 # Symbol resolution
 # ---------------------------------------------------------------------------
 
-def _resolve_symbol(tickers: list[str]) -> tuple[str, Path]:
-    """Return (symbol, feature_csv_path) for the first ticker that has data.
+def _resolve_symbol(tickers: list[str]) -> tuple[str, Path, Optional[str]]:
+    """Return (symbol, feature_csv_path, warning) for the first ticker that has data.
 
-    Falls back to whatever is in DATA_DIR when none of the requested tickers
-    have a matching CSV.
+    Returns warning=None when an exact match is found.  When the fallback is
+    used, warning contains a human-readable description of the substitution so
+    callers can surface it to the user.
     """
     for ticker in tickers:
         candidate = DATA_DIR / f"{ticker}_features.csv"
         if candidate.exists():
             logger.info("Using feature CSV for requested ticker %s", ticker)
-            return ticker, candidate
+            return ticker, candidate, None
 
     # Fallback: use whatever features file exists
     csvs = sorted(DATA_DIR.glob("*_features.csv"))
     if csvs:
         symbol = csvs[0].stem.replace("_features", "")
+        warning_msg = (
+            f"None of the requested tickers {tickers} have feature CSVs. "
+            f"Fell back to '{symbol}'. Results reflect '{symbol}', not the requested ticker(s)."
+        )
         logger.info(
             "None of %s have feature CSVs — falling back to %s", tickers, symbol
         )
-        return symbol, csvs[0]
+        return symbol, csvs[0], warning_msg
 
     raise RuntimeError(
         f"No feature CSVs found in {DATA_DIR}. "
@@ -243,7 +248,8 @@ def _run_binary(feature_csv: Path, symbol: str) -> None:
 # ---------------------------------------------------------------------------
 
 def _archive_and_read(
-    run_id: str, symbol: str, date_start: str, date_end: str
+    run_id: str, symbol: str, date_start: str, date_end: str,
+    warning: Optional[str] = None,
 ) -> BacktestResponse:
     # Binary writes to PROJECT_ROOT (its CWD)
     equity_src = PROJECT_ROOT / "ml_equity.csv"
@@ -269,6 +275,7 @@ def _archive_and_read(
         equity=equity,
         trades=trades,
         cached=False,
+        warning=warning,
     )
 
 

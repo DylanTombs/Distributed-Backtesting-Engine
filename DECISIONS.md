@@ -303,3 +303,13 @@ A record of key architectural and implementation decisions. Ordered by subsystem
 **Rationale:** The C++ binary always writes `ml_equity.csv` and `ml_trades.csv` to a fixed path (its CWD = PROJECT_ROOT). FastAPI runs synchronous route handlers in a thread pool, making concurrent writes possible. A lock prevents two requests from reading each other's output files.
 
 **Trade-offs:** Serialises all backtest requests. Acceptable because the binary typically completes in < 15 s; queue depth in real use is near zero. A per-run output directory would be preferable if the binary ever gains an `--output-dir` flag.
+
+---
+
+### ADR-028: Ticker substitution warning field over RuntimeError
+
+**Decision:** When `_resolve_symbol` falls back to a CSV that doesn't match any requested ticker, it returns a `warning` string rather than raising. The warning propagates to `BacktestResponse.warning`.
+
+**Rationale:** Raising would block the user from getting any result. The fallback is still useful (some backtest is better than a hard error) as long as the substitution is visible. The popup can surface the warning message to the user.
+
+**Trade-offs:** Users must read the warning; the result isn't blocked. If the API is extended to require exact ticker matching, `warning` can be promoted to an error at that point.
