@@ -293,3 +293,13 @@ A record of key architectural and implementation decisions. Ordered by subsystem
 **Trade-offs:**
 - The parser is brittle to non-standard JSON formatting (e.g., multi-line string values, escaped quotes in names). Acceptable given we generate the file ourselves.
 - If the schema evolves to carry structured data (constraints, versioning rules), switch to a proper JSON library at that point.
+
+---
+
+### ADR-027: threading.Lock to serialise ml_backtest invocations
+
+**Decision:** A module-level `threading.Lock` in `runner.py` wraps `_execute()` calls so only one binary invocation runs at a time.
+
+**Rationale:** The C++ binary always writes `ml_equity.csv` and `ml_trades.csv` to a fixed path (its CWD = PROJECT_ROOT). FastAPI runs synchronous route handlers in a thread pool, making concurrent writes possible. A lock prevents two requests from reading each other's output files.
+
+**Trade-offs:** Serialises all backtest requests. Acceptable because the binary typically completes in < 15 s; queue depth in real use is near zero. A per-run output directory would be preferable if the binary ever gains an `--output-dir` flag.

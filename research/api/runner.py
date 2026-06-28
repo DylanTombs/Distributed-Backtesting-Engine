@@ -20,6 +20,7 @@ import math
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from collections import OrderedDict
 from datetime import datetime
@@ -40,6 +41,12 @@ OUTPUT_DIR    = PROJECT_ROOT / "output"
 LOOKBACK_BARS = 60   # bars of history prepended so model has seq_len context
 
 _LRU_MAX = 20
+
+# Serialise binary invocations: the C++ binary always writes ml_equity.csv and
+# ml_trades.csv to PROJECT_ROOT (its CWD), so concurrent requests would race on
+# those files.  The LRU cache lookup remains concurrent — only _execute() is
+# serialised.
+_binary_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +93,8 @@ def run_backtest(
         logger.info("Cache hit for %s", cache_key)
         return BacktestResponse(**{**cached.model_dump(), "cached": True})
 
-    result = _execute(tickers, date_start, date_end)
+    with _binary_lock:
+        result = _execute(tickers, date_start, date_end)
     _cache.put(cache_key, result)
     return result
 
