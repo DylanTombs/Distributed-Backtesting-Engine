@@ -27,6 +27,8 @@
     }
   ],
 
+  "options_page": "settings/settings.html",
+
   "action": {
     "default_popup": "popup/popup.html",
     "default_title": "TradingTransformer — Backtest this page",

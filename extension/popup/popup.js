@@ -245,7 +245,9 @@ function renderResults(result) {
 
   // Dashboard link
   if (result.run_id) {
-    linkDashboard.href = `http://localhost:8501?run_id=${result.run_id}`;
+    chrome.storage.sync.get({ dashboardBase: "http://localhost:8501" }, ({ dashboardBase }) => {
+      linkDashboard.href = `${dashboardBase}?run_id=${result.run_id}`;
+    });
     linkDashboard.style.display = "block";
   }
 }
