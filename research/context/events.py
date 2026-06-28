@@ -24,6 +24,16 @@ EVENTS: Dict[str, EventRecord] = {
     # -----------------------------------------------------------------------
     # Mega-crashes
     # -----------------------------------------------------------------------
+    "great_depression_1929": EventRecord(
+        label="Wall Street Crash (1929)",
+        keywords=["1929 crash", "black tuesday", "wall street crash 1929",
+                  "great depression crash", "stock market crash 1929"],
+        date_start="1929-10-24",
+        date_end="1932-07-08",
+        tickers=["GE", "GM", "XOM"],
+        description="Dow fell 89 % peak to trough; triggered the Great Depression.",
+        sector="broad market",
+    ),
     "black_monday_1987": EventRecord(
         label="Black Monday (1987)",
         keywords=["black monday", "1987 crash", "october 1987", "dow crash 1987"],
@@ -107,6 +117,16 @@ EVENTS: Dict[str, EventRecord] = {
         description="VIX doubled overnight; inverse-vol ETFs were wiped out.",
         sector="broad market",
     ),
+    "china_circuit_breaker_2016": EventRecord(
+        label="China circuit breaker crash (Jan 2016)",
+        keywords=["china circuit breaker", "china market halt 2016",
+                  "csi 300 circuit breaker", "china stock halt 2016"],
+        date_start="2016-01-04",
+        date_end="2016-01-07",
+        tickers=["FXI", "BABA", "JD", "EEM", "SPY"],
+        description="New CSI 300 circuit breakers halted Chinese markets twice in one week.",
+        sector="emerging markets",
+    ),
 
     # -----------------------------------------------------------------------
     # Fed / Macro events
@@ -139,6 +159,26 @@ EVENTS: Dict[str, EventRecord] = {
         date_end="2023-07-26",
         tickers=["TLT", "XLF", "SPY", "QQQ"],
         description="Fed hiked 525 bp in 16 months to combat 40-year-high inflation.",
+        sector="macro",
+    ),
+    "ltcm_russian_default_1998": EventRecord(
+        label="LTCM collapse / Russian default (1998)",
+        keywords=["ltcm", "long term capital management", "russian default 1998",
+                  "russia bond default", "ltcm bailout", "hedge fund crisis 1998"],
+        date_start="1998-08-17",
+        date_end="1998-10-15",
+        tickers=["GS", "JPM", "MS", "BAC", "SPY"],
+        description="Russia defaulted; LTCM required a Fed-orchestrated $3.6 B bailout.",
+        sector="macro",
+    ),
+    "uk_gilt_crisis_2022": EventRecord(
+        label="UK gilt crisis (Sep–Oct 2022)",
+        keywords=["uk gilt crisis", "liz truss mini budget", "gilt selloff 2022",
+                  "uk pension crisis 2022", "kwarteng budget"],
+        date_start="2022-09-23",
+        date_end="2022-10-14",
+        tickers=["EWU", "FXB", "GBP", "VGK"],
+        description="Truss mini-budget triggered a gilt rout; BoE emergency bond purchases.",
         sector="macro",
     ),
 
@@ -209,6 +249,26 @@ EVENTS: Dict[str, EventRecord] = {
         description="GBP fell 10 % in hours; FTSE 100 dropped 8 % at open.",
         sector="forex / international",
     ),
+    "gulf_war_1991": EventRecord(
+        label="Gulf War rally (1991)",
+        keywords=["gulf war 1991", "operation desert storm", "iraq war 1991",
+                  "gulf war stock rally", "desert storm market"],
+        date_start="1991-01-17",
+        date_end="1991-02-28",
+        tickers=["BA", "LMT", "RTX", "XOM", "SPY"],
+        description="Markets rallied 18 % during Desert Storm as the war ended quickly.",
+        sector="broad market",
+    ),
+    "us_election_2016": EventRecord(
+        label="Trump election night rally (Nov 2016)",
+        keywords=["trump election 2016", "election night 2016", "trump win 2016",
+                  "november 2016 election", "trump stock rally"],
+        date_start="2016-11-08",
+        date_end="2016-11-14",
+        tickers=["SPY", "XLF", "GS", "JPM", "BAC"],
+        description="Surprise Trump win triggered a bank/infrastructure rally; futures reversed from -5% to +1%.",
+        sector="broad market",
+    ),
 
     # -----------------------------------------------------------------------
     # Single-stock / sector earnings shocks
@@ -263,6 +323,26 @@ EVENTS: Dict[str, EventRecord] = {
         description="GME rose 1,700 % in weeks driven by retail co-ordination on Reddit.",
         sector="retail",
     ),
+    "enron_worldcom_collapse": EventRecord(
+        label="Enron/WorldCom accounting scandals (2001–2002)",
+        keywords=["enron collapse", "worldcom fraud", "enron bankruptcy",
+                  "worldcom bankruptcy", "accounting scandal 2002", "arthur andersen"],
+        date_start="2001-10-16",
+        date_end="2002-07-21",
+        tickers=["ENE", "WCOM", "XLK", "SPY"],
+        description="Enron and WorldCom collapsed in the largest bankruptcies in US history at the time.",
+        sector="broad market",
+    ),
+    "nvidia_deepseek_recovery_2025": EventRecord(
+        label="AI recovery rally (Feb–Mar 2025)",
+        keywords=["nvidia recovery 2025", "ai rebound 2025", "nvda recovery",
+                  "ai stocks recover 2025", "deepseek recovery"],
+        date_start="2025-02-03",
+        date_end="2025-03-28",
+        tickers=["NVDA", "MSFT", "GOOGL", "AMD", "META"],
+        description="AI stocks rebounded after the DeepSeek shock as earnings confirmed AI capex growth.",
+        sector="technology",
+    ),
 
     # -----------------------------------------------------------------------
     # Crypto contagion (relevant if user has crypto-adjacent stocks)
@@ -281,6 +361,16 @@ EVENTS: Dict[str, EventRecord] = {
     # -----------------------------------------------------------------------
     # Pandemic / biotech events
     # -----------------------------------------------------------------------
+    "covid_recovery_2020": EventRecord(
+        label="COVID market recovery (Apr–Dec 2020)",
+        keywords=["covid recovery 2020", "v-shaped recovery", "pandemic recovery rally",
+                  "fed stimulus 2020", "cares act rally"],
+        date_start="2020-03-23",
+        date_end="2020-12-31",
+        tickers=["AAPL", "MSFT", "AMZN", "TSLA", "NVDA", "SPY"],
+        description="S&P 500 recovered 100 % from COVID trough by year-end on fiscal and monetary stimulus.",
+        sector="broad market",
+    ),
     "covid_vaccine_pfizer": EventRecord(
         label="Pfizer vaccine announcement (Nov 2020)",
         keywords=["pfizer vaccine", "biontech vaccine", "covid vaccine november 2020",
@@ -307,6 +397,20 @@ EVENTS: Dict[str, EventRecord] = {
     ),
 
     # -----------------------------------------------------------------------
+    # Asian financial crisis
+    # -----------------------------------------------------------------------
+    "asian_financial_crisis_1997": EventRecord(
+        label="Asian financial crisis (1997–1998)",
+        keywords=["asian financial crisis", "thai baht crisis", "asia crisis 1997",
+                  "asian currency crisis", "korea imf 1997", "indonesia crisis 1997"],
+        date_start="1997-07-02",
+        date_end="1998-08-17",
+        tickers=["EEM", "FXI", "SPY", "GS", "JPM"],
+        description="Thai baht devaluation triggered currency and equity collapses across Southeast Asia.",
+        sector="emerging markets",
+    ),
+
+    # -----------------------------------------------------------------------
     # Trade war
     # -----------------------------------------------------------------------
     "us_china_trade_war": EventRecord(
@@ -321,8 +425,32 @@ EVENTS: Dict[str, EventRecord] = {
     ),
 
     # -----------------------------------------------------------------------
+    # SVB / banking follow-on
+    # -----------------------------------------------------------------------
+    "regional_bank_crisis_followon_2023": EventRecord(
+        label="Regional banking contagion (Mar–May 2023)",
+        keywords=["first republic bank", "frb collapse", "pac west 2023",
+                  "western alliance 2023", "regional bank 2023", "bank contagion 2023"],
+        date_start="2023-03-17",
+        date_end="2023-05-05",
+        tickers=["KRE", "FRC", "PACW", "WAL", "XLF"],
+        description="SVB contagion continued: First Republic and PacWest also failed or were seized.",
+        sector="financials",
+    ),
+
+    # -----------------------------------------------------------------------
     # Recent AI / macro
     # -----------------------------------------------------------------------
+    "ai_capex_boom_2023": EventRecord(
+        label="AI capex boom / NASDAQ rally (H2 2023)",
+        keywords=["ai rally 2023", "nasdaq rally 2023", "magnificent seven 2023",
+                  "ai capex 2023", "chatgpt effect stocks", "llm boom stocks"],
+        date_start="2023-05-26",
+        date_end="2023-12-29",
+        tickers=["NVDA", "MSFT", "META", "GOOGL", "AMZN", "AAPL", "TSLA"],
+        description="AI investment surge drove the 'Magnificent Seven' and a 40 % NASDAQ rally in H2 2023.",
+        sector="technology",
+    ),
     "deepseek_ai_shock_2025": EventRecord(
         label="DeepSeek AI shock (Jan 2025)",
         keywords=["deepseek", "deepseek r1", "ai cheap model", "deepseek shock",
@@ -341,6 +469,16 @@ EVENTS: Dict[str, EventRecord] = {
         date_end="2025-04-09",
         tickers=["SPY", "QQQ", "AAPL", "AMZN", "TSLA"],
         description="Broad reciprocal tariffs announcement caused a multi-day global selloff.",
+        sector="broad market",
+    ),
+    "us_tariff_pause_2025": EventRecord(
+        label="Tariff pause rally (Apr 2025)",
+        keywords=["tariff pause", "trump tariff pause 2025", "90 day tariff pause",
+                  "trade war pause 2025", "april tariff pause"],
+        date_start="2025-04-09",
+        date_end="2025-04-11",
+        tickers=["SPY", "QQQ", "AAPL", "AMZN", "NVDA"],
+        description="90-day tariff pause announcement triggered S&P 500's largest single-day gain since 2020.",
         sector="broad market",
     ),
 }
