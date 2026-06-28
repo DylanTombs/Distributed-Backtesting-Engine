@@ -293,3 +293,15 @@ A record of key architectural and implementation decisions. Ordered by subsystem
 **Trade-offs:**
 - The parser is brittle to non-standard JSON formatting (e.g., multi-line string values, escaped quotes in names). Acceptable given we generate the file ourselves.
 - If the schema evolves to carry structured data (constraints, versioning rules), switch to a proper JSON library at that point.
+
+---
+
+## Context Extraction
+
+### ADR-031: Proportional LLM confidence scoring
+
+**Decision:** `_llm_pass()` computes confidence as `0.4 + 0.10*event_label + 0.15*date_start + 0.05*date_end + 0.10*tickers`, capped at 0.80.
+
+**Rationale:** A hardcoded 0.75 caused LLM responses with all-null fields to artificially boost the merged confidence score above a high-quality rule-based result. Proportional scoring ensures a null-heavy LLM response contributes appropriately to the merge.
+
+**Trade-offs:** The weights are heuristic. The 0.80 cap reserves the 0.80–1.0 range for future high-confidence signals (e.g., exact event key match + verified dates).
