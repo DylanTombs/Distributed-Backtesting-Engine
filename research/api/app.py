@@ -12,11 +12,13 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+import threading
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 
 from .cors import add_cors
-from .runner import is_model_loaded, run_backtest
+from .runner import is_model_loaded, run_backtest, warmup_cache
 from .schemas import (
     BacktestRequest,
     BacktestResponse,
@@ -29,10 +31,19 @@ from .schemas import (
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):  # noqa: ARG001
+    t = threading.Thread(target=warmup_cache, daemon=True, name="cache-warmup")
+    t.start()
+    yield
+
+
 app = FastAPI(
     title="TradingTransformer Contextual Backtest API",
     version="0.1.0",
     description="Bridge between the browser extension and the backtesting pipeline.",
+    lifespan=lifespan,
 )
 add_cors(app)
 
