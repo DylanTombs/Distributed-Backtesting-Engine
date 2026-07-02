@@ -40,7 +40,7 @@ MODEL_DIR     = PROJECT_ROOT / "models"
 OUTPUT_DIR    = PROJECT_ROOT / "output"
 LOOKBACK_BARS = 60   # bars of history prepended so model has seq_len context
 
-_LRU_MAX = 20
+_LRU_MAX = 50
 
 # Serialise binary invocations: the C++ binary always writes ml_equity.csv and
 # ml_trades.csv to PROJECT_ROOT (its CWD), so concurrent requests would race on
@@ -97,6 +97,31 @@ def run_backtest(
         result = _execute(tickers, date_start, date_end)
     _cache.put(cache_key, result)
     return result
+
+
+def warmup_cache() -> None:
+    """Pre-populate the LRU cache for every curated event.
+
+    Runs in a background daemon thread at startup.  Each event is attempted
+    independently — a failure (missing binary, CSV out of range, etc.) is
+    logged and skipped so the remaining events still warm up.
+    """
+    from research.context.events import EVENTS  # local import avoids circular dep
+
+    logger.info("warmup_cache: starting pre-warm for %d events", len(EVENTS))
+    hits = 0
+    for key, ev in EVENTS.items():
+        try:
+            run_backtest(
+                tickers=ev.tickers,
+                date_start=ev.date_start,
+                date_end=ev.date_end,
+            )
+            hits += 1
+            logger.debug("warmup_cache: primed %s", key)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("warmup_cache: skipped %s — %s", key, exc)
+    logger.info("warmup_cache: complete — %d/%d events primed", hits, len(EVENTS))
 
 
 # ---------------------------------------------------------------------------
