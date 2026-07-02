@@ -138,6 +138,11 @@ def _execute(tickers: list[str], date_start: str, date_end: str) -> BacktestResp
     # Find the best available symbol with a feature CSV on disk
     symbol, src_csv, warning = _resolve_symbol(tickers)
 
+    # Remove any output files left behind by a previous invocation so a run
+    # that writes nothing can never be mistaken for a fresh result (P0-1).
+    (PROJECT_ROOT / "ml_equity.csv").unlink(missing_ok=True)
+    (PROJECT_ROOT / "ml_trades.csv").unlink(missing_ok=True)
+
     tmp_dir = Path(tempfile.mkdtemp(prefix="tt_backtest_"))
     try:
         filtered_csv = _filter_csv(src_csv, symbol, date_start, date_end, tmp_dir)
@@ -279,6 +284,12 @@ def _archive_and_read(
     # Binary writes to PROJECT_ROOT (its CWD)
     equity_src = PROJECT_ROOT / "ml_equity.csv"
     trades_src = PROJECT_ROOT / "ml_trades.csv"
+
+    # _execute() unlinks both files before the run, so absence here means the
+    # binary exited 0 without producing output — fail loudly rather than
+    # returning an empty (or previously stale) result (P0-1).
+    if not equity_src.exists():
+        raise RuntimeError("ml_backtest produced no output")
 
     run_dir = OUTPUT_DIR / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
