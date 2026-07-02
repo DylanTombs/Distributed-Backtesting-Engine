@@ -219,24 +219,36 @@ function renderResults(result) {
   panelResults.style.display = "block";
   metricsGrid.innerHTML = "";
 
-  // Metric cards
+  // Metric cards — built with createElement/textContent only. API values are
+  // untrusted; never interpolate them into innerHTML (XSS hardening, P1-4).
   const m = result.metrics ?? {};
+  const days = Number.isFinite(Number(m.days)) && m.days != null && m.days !== ""
+    ? String(Number(m.days))
+    : "—";
   const cards = [
     { label: "Sharpe",  value: fmt(m.sharpe_ratio, 2),    pos: (m.sharpe_ratio  ?? 0) > 0 },
     { label: "Max DD",  value: fmt(m.max_drawdown_pct, 1) + "%", pos: false },
     { label: "Return",  value: fmt(m.total_return_pct, 1) + "%", pos: (m.total_return_pct ?? 0) > 0 },
     { label: "Win %",   value: fmt(m.win_rate_pct, 0) + "%",     pos: (m.win_rate_pct ?? 0) >= 50 },
-    { label: "Days",    value: String(m.days ?? "—"),      pos: null },
+    { label: "Days",    value: days,                        pos: null },
     { label: "Trades",  value: String(result.trades?.length ?? "—"), pos: null },
   ];
 
   for (const c of cards) {
     const card = document.createElement("div");
     card.className = "metric-card";
-    card.innerHTML = `
-      <div class="metric-label">${c.label}</div>
-      <div class="metric-value ${c.pos === true ? "pos" : c.pos === false ? "neg" : ""}">${c.value}</div>
-    `;
+
+    const labelEl = document.createElement("div");
+    labelEl.className = "metric-label";
+    labelEl.textContent = c.label;
+
+    const valueEl = document.createElement("div");
+    valueEl.className =
+      "metric-value" + (c.pos === true ? " pos" : c.pos === false ? " neg" : "");
+    valueEl.textContent = c.value;
+
+    card.appendChild(labelEl);
+    card.appendChild(valueEl);
     metricsGrid.appendChild(card);
   }
 
