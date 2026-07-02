@@ -9,6 +9,12 @@ compile_commands.json
 *.o
 *.a
 *.out
+CTestTestfile.cmake
+cmake_test_discovery_*.json
+backtester_tests[[]1[]]_*.cmake
+backtester/backtest
+backtester/backtester_tests
+# NOTE: backtester/ml_backtest stays tracked intentionally (see CLAUDE.md)
 
 # Python
 __pycache__/
@@ -31,6 +37,16 @@ env/
 
 # Pipeline output (regenerated from raw data)
 features/
+
+# Test / run artefacts
+.coverage
+training.log
+ml_equity.csv
+ml_trades.csv
+output/runs/
+
+# Claude Code worktrees
+.claude/worktrees/
 
 # macOS
 .DS_Store

@@ -1,5 +1,0 @@
-if(EXISTS "/Users/dylantombs/TradingTransformer/backtester/backtester_tests[1]_tests.cmake")
-  include("/Users/dylantombs/TradingTransformer/backtester/backtester_tests[1]_tests.cmake")
-else()
-  add_test(backtester_tests_NOT_BUILT backtester_tests_NOT_BUILT)
-endif()
