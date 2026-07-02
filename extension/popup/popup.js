@@ -53,8 +53,17 @@ let allEvents      = [];     // EventSummary[] from GET /api/events
     return;
   }
 
-  // 2. Populate Quick Picks from event database
-  allEvents = await send("LIST_EVENTS") ?? [];
+  // 2. Populate Quick Picks from event database.
+  // A failed load is non-fatal, but must be visible (P2-5): warn and
+  // continue with an empty list rather than silently rendering an empty
+  // dropdown.
+  const eventsResp = await send("LIST_EVENTS");
+  if (Array.isArray(eventsResp)) {
+    allEvents = eventsResp;
+  } else {
+    allEvents = [];
+    showMsg("Could not load event list — Quick Picks unavailable", "error");
+  }
   populateEventDropdown(allEvents);
 
   // 3. Check session cache for this tab
@@ -74,10 +83,15 @@ let allEvents      = [];     // EventSummary[] from GET /api/events
 // ---------------------------------------------------------------------------
 // Context detection
 // ---------------------------------------------------------------------------
+function isHttpUrl(url) {
+  return typeof url === "string" && /^https?:\/\//i.test(url);
+}
+
 async function detectContext(tab) {
   setConfidence(0, "Analysing page…");
 
   let rawText = null;
+  let injectFailed = false;
   try {
     const [{ result }] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -86,6 +100,15 @@ async function detectContext(tab) {
     rawText = result;
   } catch (_) {
     // Can't inject into this page (e.g. chrome:// URL) — try URL only
+    injectFailed = true;
+  }
+
+  // If we could not read the page AND the URL is unusable (chrome://,
+  // about:, edge://, file://, missing…), the EXTRACT_CONTEXT call is
+  // doomed — tell the user instead of failing silently (P2-5).
+  if (injectFailed && !isHttpUrl(tab?.url)) {
+    setConfidence(0, "Cannot read this page — open a news article and try again");
+    return;
   }
 
   const ctx = await send("EXTRACT_CONTEXT", {
