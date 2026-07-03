@@ -172,3 +172,71 @@ class TestRunArchivePruning:
         runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05")
 
         assert not old.exists()
+
+
+# ---------------------------------------------------------------------------
+# ADR-028: unknown-ticker fallback surfaces a warning, exact match does not
+# ---------------------------------------------------------------------------
+
+class TestSymbolFallback:
+    def test_unknown_ticker_falls_back_with_warning(self, env):
+        result = runner.run_backtest(["ZZZZ"], "2020-03-02", "2020-03-05")
+        assert result.warning is not None
+        assert "ZZZZ" in result.warning
+        assert "AAPL" in result.warning
+
+    def test_exact_match_has_no_warning(self, env):
+        result = runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05")
+        assert result.warning is None
+
+
+# ---------------------------------------------------------------------------
+# Cache behaviour through the real execution path
+# ---------------------------------------------------------------------------
+
+class TestCacheHit:
+    def test_second_request_is_cached_and_a_fresh_object(self, env):
+        first = runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05")
+        second = runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05")
+
+        assert first.cached is False
+        assert second.cached is True
+        # Revalidated copy, not the same mutable object (audit: verified-safe
+        # pattern — this pins it)
+        assert second is not first
+        assert [p.equity for p in second.equity] == [p.equity for p in first.equity]
+
+    def test_ticker_order_hits_same_cache_entry(self, env):
+        """ADR-037: cache key sorts tickers."""
+        (env.data / "MSFT_features.csv").write_text(_FEATURE_CSV)
+        first = runner.run_backtest(["MSFT", "AAPL"], "2020-03-02", "2020-03-05")
+        second = runner.run_backtest(["AAPL", "MSFT"], "2020-03-02", "2020-03-05")
+        assert first.cached is False
+        assert second.cached is True
+
+
+# ---------------------------------------------------------------------------
+# CSV reader edge cases
+# ---------------------------------------------------------------------------
+
+class TestCsvReaders:
+    def test_unparseable_equity_timestamps_are_skipped(self, env):
+        _write_binary(env, """#!/bin/sh
+printf 'timestamp,equity\\nnot-a-date,50\\n2020-03-03,101000\\n' > ml_equity.csv
+printf 'timestamp,direction,profit\\n' > ml_trades.csv
+exit 0
+""")
+        result = runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05")
+        assert [p.equity for p in result.equity] == [101000.0]
+
+    def test_trades_capped_at_500_rows(self, env):
+        rows = "".join(
+            f"2020-03-03,SELL,{i}\\n" for i in range(600)
+        )
+        _write_binary(env, f"""#!/bin/sh
+printf 'timestamp,equity\\n2020-03-03,101000\\n' > ml_equity.csv
+printf 'timestamp,direction,profit\\n{rows}' > ml_trades.csv
+exit 0
+""")
+        result = runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05")
+        assert len(result.trades) == 500
