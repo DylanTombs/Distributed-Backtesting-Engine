@@ -12,9 +12,9 @@ compile_commands.json
 CTestTestfile.cmake
 cmake_test_discovery_*.json
 backtester_tests[[]1[]]_*.cmake
-backtester/backtest
 backtester/backtester_tests
-# NOTE: backtester/ml_backtest stays tracked intentionally (see CLAUDE.md)
+# NOTE: backtester/ml_backtest and backtester/backtest (transparent-strategy
+# CLI, Phase 8) stay tracked intentionally (see CLAUDE.md)
 
 # Python
 __pycache__/

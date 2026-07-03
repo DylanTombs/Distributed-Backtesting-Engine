@@ -1,33 +1,67 @@
+/**
+ * backtest — transparent-strategy CLI (Phase 8.2, no LibTorch).
+ *
+ * Usage:
+ *   ./backtest <ohlcv_csv> <symbol> <strategy_spec> [output_dir]
+ *
+ * Runs the RuleStrategy described by <strategy_spec> (see RuleStrategy.hpp
+ * for the format) over the OHLCV CSV and writes ml_equity.csv and
+ * ml_trades.csv into <output_dir> (default: current directory) — the same
+ * output contract as ml_backtest, so the API runner treats both binaries
+ * identically.
+ *
+ * Exit codes: 0 success, 1 usage, 2 invalid spec, 3 runtime failure.
+ */
+
 #include "engine/BacktestEngine.hpp"
 #include "market/CSVDataHandler.hpp"
-#include "strategy/MovingAverageStrategy.hpp"
+#include "strategy/RuleStrategy.hpp"
 
 #include <iostream>
+#include <stdexcept>
+#include <string>
 
-int main() {
-
-    std::cout << "Starting backtest..." << std::endl;
-
-    CSVDataHandler data("../backtester/data/AAPL.csv");
-
-    MovingAverageStrategy strategy(5);
-
-    BacktestEngine engine(strategy, data);
-
-    engine.run();
-
-
-    std::cout << "Backtest complete." << std::endl;
-
-    auto equity = engine.getPortfolio().getEquityCurve();
-    if (equity.empty()) {
-        std::cout << "No equity data generated." << std::endl;
-    } else {
-        std::cout << "Final equity: " << equity.back().equity << std::endl;
+int main(int argc, char* argv[]) {
+    if (argc < 4) {
+        std::cerr << "Usage: " << argv[0]
+                  << " <ohlcv_csv> <symbol> <strategy_spec> [output_dir]\n";
+        return 1;
     }
 
-    engine.getPortfolio().exportEquityCurve("equity.csv");
-    engine.getPortfolio().exportTrades("trades.csv");
+    const std::string csvPath  = argv[1];
+    const std::string symbol   = argv[2];
+    const std::string specPath = argv[3];
+    const std::string outDir   = (argc > 4) ? argv[4] : ".";
 
-    return 0;
+    try {
+        const RuleSpec spec = RuleSpec::loadFromFile(specPath);
+        std::cout << "Strategy: " << (spec.name.empty() ? "unnamed" : spec.name)
+                  << "  (warmup " << spec.warmupBars() << " bars)\n";
+
+        RuleStrategy strategy(spec);
+        CSVDataHandler data(csvPath, symbol);
+        BacktestEngine engine(strategy, data);
+
+        engine.run();
+
+        const auto& equity = engine.getPortfolio().getEquityCurve();
+        if (equity.empty()) {
+            std::cerr << "ERROR: no market data streamed from " << csvPath << "\n";
+            return 3;
+        }
+
+        engine.getPortfolio().exportEquityCurve(outDir + "/ml_equity.csv");
+        engine.getPortfolio().exportTrades(outDir + "/ml_trades.csv");
+
+        std::cout << "Bars: " << equity.size()
+                  << "  Final equity: " << equity.back().equity << "\n";
+        return 0;
+
+    } catch (const std::invalid_argument& e) {
+        std::cerr << "ERROR: " << e.what() << "\n";
+        return 2;
+    } catch (const std::exception& e) {
+        std::cerr << "ERROR: " << e.what() << "\n";
+        return 3;
+    }
 }
