@@ -33,12 +33,15 @@ from typing import Optional
 
 import pandas as pd  # noqa: E402
 
-from .schemas import BacktestResponse, EquityPoint
+from research.data import fetcher
+from .schemas import BacktestResponse, EquityPoint, StrategySpec
+from .strategies import ResolvedStrategy, StrategyError, resolve, to_spec_file
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BINARY        = PROJECT_ROOT / "backtester" / "ml_backtest"
+RULES_BINARY  = PROJECT_ROOT / "backtester" / "backtest"
 DATA_DIR      = PROJECT_ROOT / "backtester" / "data"
 MODEL_DIR     = PROJECT_ROOT / "models"
 OUTPUT_DIR    = PROJECT_ROOT / "output"
@@ -114,14 +117,31 @@ def run_backtest(
     tickers: list[str],
     date_start: str,
     date_end: str,
+    strategy: Optional[StrategySpec] = None,
 ) -> BacktestResponse:
-    cache_key = f"{','.join(sorted(tickers))}|{date_start}|{date_end}"
+    try:
+        resolved = resolve(strategy)
+    except StrategyError as exc:
+        raise BacktestInputError(str(exc)) from exc
+
+    cache_key = (
+        f"{','.join(sorted(tickers))}|{date_start}|{date_end}|{resolved.hash}"
+    )
     cached = _cache.get(cache_key)
     if cached is not None:
         logger.info("Cache hit for %s", cache_key)
         return BacktestResponse(**{**cached.model_dump(), "cached": True})
 
-    result = _execute(tickers, date_start, date_end)
+    if resolved.is_ml:
+        result = _execute(tickers, date_start, date_end)
+    else:
+        result = _execute_rules(tickers, date_start, date_end, resolved)
+
+    result = BacktestResponse(**{
+        **result.model_dump(),
+        "strategy": resolved.canonical,
+        "experimental": resolved.is_ml,
+    })
     _cache.put(cache_key, result)
     return result
 
@@ -137,11 +157,12 @@ def warmup_cache() -> None:
 
     # Distinguish "binary not built" (expected in CI/dev) from per-event
     # failures (a production incident on a hosted deploy) — a 0/41 prime
-    # must never look healthy in the logs (P2-3).
-    if not BINARY.exists():
+    # must never look healthy in the logs (P2-3). Warm-up primes the
+    # default (transparent) strategy, so the rules binary is the gate.
+    if not RULES_BINARY.exists():
         logger.warning(
-            "warmup_cache: ml_backtest binary not found at %s — "
-            "skipping pre-warm entirely", BINARY,
+            "warmup_cache: backtest binary not found at %s — "
+            "skipping pre-warm entirely", RULES_BINARY,
         )
         return
 
@@ -164,6 +185,95 @@ def warmup_cache() -> None:
 # ---------------------------------------------------------------------------
 # Execution
 # ---------------------------------------------------------------------------
+
+def _execute_rules(
+    tickers: list[str], date_start: str, date_end: str,
+    resolved: ResolvedStrategy,
+) -> BacktestResponse:
+    """Transparent-strategy path (Phase 8): raw OHLCV + rules binary.
+
+    No silent symbol substitution here — if none of the requested tickers
+    has obtainable data, that is the client's answer (ADR-047).
+    """
+    if not RULES_BINARY.exists():
+        raise RuntimeError(
+            f"backtest binary not found at {RULES_BINARY}. "
+            "Build it with cmake in backtester/."
+        )
+
+    symbol: Optional[str] = None
+    src_csv: Optional[Path] = None
+    for ticker in tickers:
+        candidate = fetcher.get_ohlcv_csv(ticker, date_end)
+        if candidate is not None:
+            symbol, src_csv = ticker, candidate
+            break
+    if symbol is None or src_csv is None:
+        raise BacktestInputError(
+            f"No market data is available for {tickers}. The symbol may be "
+            "delisted or not covered by the data provider."
+        )
+
+    run_id = f"{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
+    run_dir = Path(tempfile.mkdtemp(prefix="tt_run_"))
+    try:
+        filtered_csv = _filter_ohlcv(
+            src_csv, symbol, date_start, date_end, run_dir,
+            warmup_bars=resolved.warmup_bars(),
+        )
+        spec_path = run_dir / "strategy_spec.txt"
+        spec_path.write_text(to_spec_file(resolved))
+
+        with _run_slots:
+            _invoke(
+                [str(RULES_BINARY), str(filtered_csv), symbol,
+                 str(spec_path), "."],
+                cwd=run_dir,
+            )
+        return _archive_and_read(run_dir, run_id, symbol, date_start, date_end)
+    finally:
+        shutil.rmtree(run_dir, ignore_errors=True)
+
+
+def _filter_ohlcv(
+    src: Path, symbol: str, date_start: str, date_end: str, out_dir: Path,
+    warmup_bars: int,
+) -> Path:
+    """Slice an OHLCV CSV to the window plus indicator warm-up history."""
+    df = pd.read_csv(src)
+    df.columns = [c.strip().lower() for c in df.columns]
+
+    date_col = next(
+        (c for c in ("date", "timestamp") if c in df.columns), None
+    )
+    required = [date_col, "open", "high", "low", "close"]
+    if date_col is None or any(c not in df.columns for c in required):
+        raise RuntimeError(f"Unexpected OHLCV columns in data for {symbol}")
+
+    df[date_col] = pd.to_datetime(df[date_col])
+    df = df.sort_values(date_col).reset_index(drop=True)
+
+    window_mask = (df[date_col] >= date_start) & (df[date_col] <= date_end)
+    window_rows = df[window_mask]
+    if window_rows.empty:
+        raise BacktestInputError(
+            f"No data for {symbol} in [{date_start} → {date_end}]. "
+            f"Available data covers "
+            f"{df[date_col].min().date()} – {df[date_col].max().date()}."
+        )
+
+    first_idx = window_rows.index[0]
+    lookback_start = max(0, first_idx - warmup_bars)
+    sliced = df.iloc[lookback_start:window_rows.index[-1] + 1]
+
+    # Binary reads columns positionally: date, open, high, low, close
+    out_cols = [date_col, "open", "high", "low", "close"]
+    out = out_dir / f"{symbol}_ohlcv.csv"
+    sliced[out_cols].rename(columns={date_col: "date"}).to_csv(out, index=False)
+    logger.info("Filtered OHLCV %s: %d rows (incl. %d warm-up)",
+                symbol, len(sliced), first_idx - lookback_start)
+    return out
+
 
 def _execute(tickers: list[str], date_start: str, date_end: str) -> BacktestResponse:
     if not BINARY.exists():
@@ -282,15 +392,21 @@ def _run_binary(feature_csv: Path, symbol: str, cwd: Path) -> None:
     feat_scaler   = MODEL_DIR / "feature_scaler.csv"
     target_scaler = MODEL_DIR / "target_scaler.csv"
 
-    cmd = [
-        str(BINARY),
-        str(feature_csv),
-        symbol,
-        str(model_pt),
-        str(feat_scaler),
-        str(target_scaler),
-    ]
+    _invoke(
+        [
+            str(BINARY),
+            str(feature_csv),
+            symbol,
+            str(model_pt),
+            str(feat_scaler),
+            str(target_scaler),
+        ],
+        cwd=cwd,
+    )
 
+
+def _invoke(cmd: list[str], cwd: Path) -> None:
+    """Run an engine binary with timeout, logging, and exit-code checking."""
     logger.info("Running: %s", " ".join(cmd))
     t0 = time.monotonic()
 
@@ -304,7 +420,7 @@ def _run_binary(feature_csv: Path, symbol: str, cwd: Path) -> None:
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(
-            f"ml_backtest exceeded the {_BINARY_TIMEOUT_S}s time limit"
+            f"backtest binary exceeded the {_BINARY_TIMEOUT_S}s time limit"
         ) from exc
 
     logger.info("Binary exited %.1f s  rc=%d", time.monotonic() - t0, proc.returncode)
@@ -315,7 +431,7 @@ def _run_binary(feature_csv: Path, symbol: str, cwd: Path) -> None:
 
     if proc.returncode != 0:
         raise RuntimeError(
-            f"ml_backtest failed (exit {proc.returncode}): "
+            f"backtest binary failed (exit {proc.returncode}): "
             f"{proc.stderr[-400:] or proc.stdout[-400:]}"
         )
 

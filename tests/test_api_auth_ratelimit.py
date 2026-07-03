@@ -52,9 +52,11 @@ class TestApiKeyAuth:
         monkeypatch.setattr(auth, "API_KEYS", frozenset({"key_valid"}))
         with patch("research.api.app.is_model_loaded", return_value=False):
             resp = _client().post(
-                "/api/backtest", json=_PAYLOAD, headers={"X-API-Key": "key_valid"}
+                "/api/backtest",
+                json={**_PAYLOAD, "strategy": {"template": "ml_transformer"}},
+                headers={"X-API-Key": "key_valid"},
             )
-        # 400 (model not loaded) proves the request got past auth
+        # 400 (ML model not deployed) proves the request got past auth
         assert resp.status_code == 400
 
     def test_context_also_requires_key(self, monkeypatch):
@@ -94,12 +96,14 @@ def rate_limiter_enabled():
 class TestRateLimiting:
     def test_backtest_returns_429_after_limit(self, rate_limiter_enabled):
         client = _client()
+        ml_payload = {**_PAYLOAD, "strategy": {"template": "ml_transformer"}}
         with patch("research.api.app.is_model_loaded", return_value=False):
             statuses = [
-                client.post("/api/backtest", json=_PAYLOAD).status_code
+                client.post("/api/backtest", json=ml_payload).status_code
                 for _ in range(11)
             ]
-        # First 10 pass the limiter (400: model not loaded); the 11th is cut off
+        # First 10 pass the limiter (400: ML model not deployed); the 11th is
+        # cut off by the rate limit
         assert statuses[:10] == [400] * 10
         assert statuses[10] == 429
 

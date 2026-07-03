@@ -69,6 +69,46 @@ class TestRequestSizeLimits:
         assert resp.status_code == 422
 
 
+class TestStrategyValidation:
+    """Phase 8.3: malformed strategy specs fail at the boundary with 422."""
+
+    def test_unknown_template_returns_422(self):
+        resp = _client().post("/api/backtest", json={
+            **_VALID_PAYLOAD,
+            "strategy": {"template": "arbitrary_python"},
+        })
+        assert resp.status_code == 422
+
+    def test_cross_against_constant_returns_422(self):
+        resp = _client().post("/api/backtest", json={
+            **_VALID_PAYLOAD,
+            "strategy": {"rules": {"entry": [{
+                "indicator": "SMA", "period": 5,
+                "op": "crosses_above", "value": 100,
+            }]}},
+        })
+        assert resp.status_code == 422
+
+    def test_template_and_rules_together_returns_422(self):
+        resp = _client().post("/api/backtest", json={
+            **_VALID_PAYLOAD,
+            "strategy": {
+                "template": "buy_hold",
+                "rules": {"entry": [{"indicator": "PRICE", "op": ">",
+                                     "value": 0}]},
+            },
+        })
+        assert resp.status_code == 422
+
+    def test_too_many_conditions_returns_422(self):
+        cond = {"indicator": "PRICE", "op": ">", "value": 0}
+        resp = _client().post("/api/backtest", json={
+            **_VALID_PAYLOAD,
+            "strategy": {"rules": {"entry": [cond] * 9}},
+        })
+        assert resp.status_code == 422
+
+
 class TestBacktestValidation:
     def test_backtest_reversed_dates_returns_422(self):
         """model_validator on BacktestRequest rejects date_start > date_end."""
@@ -111,11 +151,25 @@ class TestBacktestValidation:
 # ---------------------------------------------------------------------------
 
 class TestBacktestModelNotLoaded:
-    def test_backtest_model_not_loaded_returns_400(self):
+    def test_ml_strategy_without_model_returns_400(self):
+        """The model gate applies only to the experimental ML path (8.3)."""
         with patch("research.api.app.is_model_loaded", return_value=False):
-            resp = _client().post("/api/backtest", json=_VALID_PAYLOAD)
+            resp = _client().post("/api/backtest", json={
+                **_VALID_PAYLOAD,
+                "strategy": {"template": "ml_transformer"},
+            })
         assert resp.status_code == 400
         assert "model" in resp.json()["detail"].lower()
+
+    def test_default_strategy_needs_no_model(self):
+        """Transparent strategies must run on servers with no ML artefacts."""
+        with patch("research.api.app.is_model_loaded", return_value=False), \
+             patch("research.api.app.run_backtest") as mock_run:
+            mock_run.return_value = BacktestResponse(
+                run_id="r", metrics={}, equity=[], trades=[])
+            resp = _client().post("/api/backtest", json=_VALID_PAYLOAD)
+        assert resp.status_code == 200
+        mock_run.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

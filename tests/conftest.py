@@ -17,6 +17,16 @@ import pytest  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
+def _no_network_data_fetch(monkeypatch):
+    """Tests must never hit the market-data provider (Phase 8.1).
+
+    Fetcher tests that exercise the network path mock httpx explicitly and
+    re-enable fetching via monkeypatch.delenv.
+    """
+    monkeypatch.setenv("DATA_FETCH_DISABLED", "1")
+
+
+@pytest.fixture(autouse=True)
 def _rate_limiter_disabled():
     """Keep the per-IP rate limiter out of unrelated API tests.
 
