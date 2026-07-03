@@ -260,3 +260,96 @@ html, body {
   color: var(--red);
   background: rgba(248,113,113,0.06);
 }
+
+/* --- Strategy panel (Phase 8.4) ------------------------------------------ */
+
+.param-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.param-grid:empty { margin-top: 0; }
+
+.param-field label {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.param-field input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-input, #1e293b);
+  border: 1px solid var(--border, #334155);
+  border-radius: 6px;
+  color: var(--text, #e2e8f0);
+  font-size: 12px;
+  padding: 5px 6px;
+}
+
+.rule-row {
+  display: grid;
+  grid-template-columns: 1.2fr 0.7fr 1fr 1.2fr 0.7fr auto;
+  gap: 4px;
+  margin-top: 6px;
+  align-items: center;
+}
+
+.rule-row select,
+.rule-row input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-input, #1e293b);
+  border: 1px solid var(--border, #334155);
+  border-radius: 4px;
+  color: var(--text, #e2e8f0);
+  font-size: 10px;
+  padding: 4px 3px;
+}
+
+.rule-row .rule-remove {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+}
+
+.rule-row .rule-remove:hover { color: var(--red); }
+
+.btn-mini {
+  font-size: 11px;
+  padding: 0 6px;
+  height: 18px;
+  line-height: 16px;
+  margin-left: 6px;
+}
+
+.strategy-hint {
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--muted);
+  min-height: 12px;
+}
+
+.strategy-hint.error { color: var(--red); }
+
+.result-strategy {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.result-strategy .experimental-tag {
+  color: #fbbf24;
+  font-weight: 600;
+}
+
+.msg-box.info {
+  border-color: var(--accent, #38bdf8);
+  color: var(--accent, #38bdf8);
+}
