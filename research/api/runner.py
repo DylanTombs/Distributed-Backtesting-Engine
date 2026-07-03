@@ -54,21 +54,31 @@ _binary_lock = threading.Lock()
 # ---------------------------------------------------------------------------
 
 class _LRUCache:
+    """LRU cache safe for concurrent access.
+
+    The warm-up daemon thread (ADR-033) writes entries while FastAPI
+    threadpool workers read and write concurrently, so every compound
+    OrderedDict operation must hold the lock (P0-2).
+    """
+
     def __init__(self, max_size: int):
         self._cache: OrderedDict = OrderedDict()
         self._max = max_size
+        self._lock = threading.Lock()
 
     def get(self, key: str) -> Optional[BacktestResponse]:
-        if key in self._cache:
-            self._cache.move_to_end(key)
-            return self._cache[key]
-        return None
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                return self._cache[key]
+            return None
 
     def put(self, key: str, value: BacktestResponse) -> None:
-        self._cache[key] = value
-        self._cache.move_to_end(key)
-        if len(self._cache) > self._max:
-            self._cache.popitem(last=False)
+        with self._lock:
+            self._cache[key] = value
+            self._cache.move_to_end(key)
+            if len(self._cache) > self._max:
+                self._cache.popitem(last=False)
 
 
 _cache = _LRUCache(_LRU_MAX)

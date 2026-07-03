@@ -68,6 +68,39 @@ class TestLRUCache:
         cache.put("k", "second")
         assert cache.get("k") == "second"
 
+    def test_lru_cache_survives_concurrent_access(self):
+        """P0-2 regression: warm-up thread writes while request threads read.
+
+        With a small max_size, concurrent put/get hammers the eviction path;
+        without internal locking this raises KeyError or corrupts the
+        OrderedDict. Any exception in a worker fails the test.
+        """
+        import threading
+
+        cache = _LRUCache(max_size=4)
+        errors: list[Exception] = []
+        barrier = threading.Barrier(8)
+
+        def hammer(worker_id: int) -> None:
+            try:
+                barrier.wait()
+                for i in range(2_000):
+                    key = f"k{(worker_id + i) % 10}"
+                    cache.put(key, i)
+                    cache.get(key)
+                    cache.get(f"k{i % 10}")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=hammer, args=(w,)) for w in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert errors == []
+        assert len(cache._cache) <= 4
+
 
 # ---------------------------------------------------------------------------
 # _compute_metrics
