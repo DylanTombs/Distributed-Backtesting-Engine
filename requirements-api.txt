@@ -1,0 +1,14 @@
+# Runtime dependencies for the hosted API image only (Phase 8.6).
+# The API path imports no torch/sklearn/streamlit — keeping them out of
+# Dockerfile.api cuts the image by gigabytes and cold-start time with it.
+# Full research/training deps live in requirements.txt.
+numpy>=1.21.0
+pandas>=1.3.0
+pydantic>=2.0
+fastapi>=0.111
+uvicorn[standard]>=0.30
+slowapi>=0.1.9
+httpx>=0.27
+trafilatura>=1.10
+dateparser>=1.2
+anthropic>=0.28

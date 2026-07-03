@@ -9,12 +9,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "==> Building linux/amd64 backtester image (pins binary to current SHA)"
-docker build --platform linux/amd64 -f Dockerfile.backtester -t tt-backtester .
+docker build --platform linux/amd64 -f Dockerfile.backtester -t tt-backtester \
+    --build-arg CMAKE_TARGET=backtest .
 
-echo "==> Extracting ml_backtest binary"
+echo "==> Extracting transparent-strategy binary (no LibTorch, 8.6)"
 container_id=$(docker create tt-backtester)
 trap 'docker rm -f "$container_id" >/dev/null' EXIT
-docker cp "$container_id:/app/ml_backtest" backtester/ml_backtest
+docker cp "$container_id:/app/backtest" backtester/backtest
 
 echo "==> Deploying to Fly.io"
 flyctl deploy --remote-only

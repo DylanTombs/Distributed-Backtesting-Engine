@@ -48,16 +48,20 @@ RUN wget -q \
 WORKDIR /build
 COPY backtester/ backtester/
 
-# Configure and build — ml_backtest target requires LibTorch.
+# Configure and build. CMAKE_TARGET selects the binary:
+#   ml_backtest (default) — experimental ML strategy, requires LibTorch
+#   backtest              — transparent rule strategies, no LibTorch (8.6)
+# Both are built with LibTorch on the prefix path so either target resolves.
 # BUILD_TESTING=OFF skips the GoogleTest FetchContent download,
 # which is not needed in the production image.
+ARG CMAKE_TARGET=ml_backtest
 RUN cmake \
         -S backtester \
         -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_PREFIX_PATH=/opt/libtorch \
         -DBUILD_TESTING=OFF \
-    && cmake --build build --target ml_backtest --parallel "$(nproc)"
+    && cmake --build build --target "${CMAKE_TARGET}" --parallel "$(nproc)"
 
 # =============================================================================
 # Stage 2: runtime — must match builder platform so copied .so files are valid
@@ -76,8 +80,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /opt/libtorch/lib/*.so* /usr/local/lib/
 RUN ldconfig
 
-# Copy compiled binary
-COPY --from=builder /build/build/ml_backtest /app/ml_backtest
+# Copy compiled binary (whichever target was selected)
+ARG CMAKE_TARGET=ml_backtest
+COPY --from=builder /build/build/${CMAKE_TARGET} /app/${CMAKE_TARGET}
 
 # Copy entrypoint script
 COPY docker/entrypoint.sh /app/entrypoint.sh
