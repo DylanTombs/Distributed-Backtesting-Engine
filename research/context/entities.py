@@ -39,7 +39,7 @@ _SP500_TICKERS: frozenset[str] = frozenset({
     "BABA", "JD", "PDD", "BIDU", "NIO", "XPEV", "LI",
     "LMT", "RTX", "NOC", "GD", "BA", "HII",
     "TWTR", "SNAP", "PINS", "LYFT", "UBER", "ABNB",
-    "MUSK", "HOOD", "SOFI",
+    "HOOD", "SOFI",
     # Additional major tickers
     "MSFT", "AAPL", "GOOGL", "AMZN", "META", "NFLX", "TSLA",
 })
