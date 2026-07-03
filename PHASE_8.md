@@ -1,157 +1,157 @@
-# Phase 8 — ML Effectiveness Deep Dive: Data Breadth & Model Rethink
+# Phase 8 — On-the-Fly Backtesting: Real Tickers, Custom Strategies
 
 **Status:** Planning
-**Prerequisites:** Phase 7 code complete (may run in parallel with the procedural 7.6 submission)
-**Ambition level:** High — the phase where the product's *answers* get good, not just its plumbing
+**Prerequisites:** Phase 7 code complete (7.6 submission may proceed in parallel)
+**Ambition level:** High — turns the extension from a demo of one model into a
+general-purpose "backtest what you're reading" tool
 
 ---
 
 ## Objective
 
-Phases 6–7 built and hardened the delivery pipeline: article → context → backtest →
-results, hosted and installable. Phase 8 attacks the two things that limit how *useful*
-those results are:
+The article is the entry point; the answer must be about **the stock the user is
+actually reading about**, driven by **a strategy the user chose or built**, delivered
+in **seconds**. Three shifts from the Phase 6/7 architecture follow:
 
-**Gap A — data breadth.** The extension scrapes and understands arbitrary articles, but
-the backtest itself only runs on pre-generated feature CSVs. Today `backtester/data/`
-holds features for **one symbol (AAPL)**. Read an NVDA earnings story and the backtest
-quietly substitutes AAPL (ADR-028 warns, but a warning is not a result). 58 tickers of
-raw OHLCV sit unused in `data/`, and nothing can fetch a ticker we've never stored.
+1. **Real tickers, on demand.** Backtests fetch raw daily OHLCV for the article's
+   ticker (or one the user types) instead of requiring pre-generated feature CSVs.
+   Today `backtester/data/` covers one symbol; every other request silently substitutes
+   AAPL. That substitution path ends for the product flow.
 
-**Gap B — model weight vs. evidence.** The current model is an encoder-decoder
-transformer (`d_model=256`, 8 heads, 3 encoder + 2 decoder layers, seq_len=30) exported
-as a 22 MB TorchScript artefact — Informer-style seq2seq machinery used to predict a
-single next step. It has never been benchmarked against cheap baselines, and the time-
-series literature (e.g. the DLinear line of work) repeatedly shows that for short-horizon
-forecasting, simple models match or beat heavy transformers. On a shared-cpu-1x VM,
-every unnecessary megabyte and matmul is latency and cold-start cost.
+2. **User-defined strategies.** The C++ engine already has an abstract `Strategy`
+   interface, a working `MovingAverageStrategy`, and a benchmark column. Phase 8
+   exposes that: users pick a strategy template and set its parameters, or compose
+   simple entry/exit rules, from the popup — and re-run instantly against the event
+   window they're reading about. **Arbitrary user code is explicitly out of scope**
+   (hosted code execution is a security non-starter); expressiveness comes from a
+   bounded rule schema, not eval.
 
-The phase principle: **measure first, then earn complexity.** No architecture change
-ships unless it beats the baselines out-of-sample under the evaluation harness built in
-8.1.
+3. **The transformer becomes an experimental exhibit.** `ml_backtest`, the 22 MB model,
+   and the 34-feature contract remain intact but move behind an "experimental" label,
+   honest about their AAPL-only training data. **No feature-engineering work happens in
+   the extension path** — the transparent strategies consume raw OHLCV only. The
+   default hosted image drops LibTorch and the model artefact entirely, which also
+   buys cold-start speed.
+
+Portability is the through-line: the LibTorch-free engine — config-driven, fast,
+dependency-light — is the shippable core for both the extension and standalone users.
 
 ---
 
 ## Task Breakdown
 
-### 8.1 Honest Evaluation Harness (gate for everything else)
+### 8.1 On-Demand OHLCV Ingestion
 
-Build the yardstick before touching the model.
+**New module:** `research/data/fetcher.py`
 
-- `research/evaluation/benchmark.py` — walk-forward evaluation (reusing
-  `research/validation/walk_forward.py`) of any candidate over multiple tickers and
-  regimes (trend, crash, chop — the curated events give ready-made windows).
-- Baselines, all sharing the same 34-feature input where applicable:
-  1. buy-and-hold
-  2. MA-crossover momentum (no ML)
-  3. ridge / logistic regression on the engineered features
-  4. LightGBM on the engineered features (optional, if the dep is acceptable)
-  5. the current transformer (frozen artefact)
-- Metrics per window: directional accuracy, strategy Sharpe (via the C++ engine for
-  final candidates; a vectorised Python approximation for cheap iteration), max
-  drawdown, turnover, and **inference ms/window on CPU**.
-- Output: a scoreboard CSV + a short markdown report checked into `research/evaluation/`.
+- Fetch daily OHLCV for `{ticker, date_start, date_end}` from a public provider.
+  Provider choice (Stooq via pandas-datareader vs. yfinance) decided by a
+  reliability/ToS spike and recorded as an ADR before implementation.
+- Results cached as `backtester/data/ohlcv/{TICKER}.csv` — public market data, cached
+  indefinitely with a volume size cap (distinct from the ADR-040 user-run TTL);
+  incremental re-fetch only for missing date ranges.
+- Hardening carried over from Phase 7: ticker regex already enforced at the boundary;
+  fetch gets explicit timeout + retry cap; failures return a clear 422 ("no data
+  available for TICKER"), **not** a silent substitute. ADR-028's fallback semantics are
+  retained only for the experimental ML path where they originated; the transparent
+  path prefers an honest error — recorded as a new ADR.
+- Offline/dev mode: `DATA_FETCH_DISABLED=1` keeps tests and air-gapped runs off the
+  network; all fetcher tests use fixtures.
 
-**Deliverable:** a table answering "does the transformer currently earn its 22 MB?" —
-whatever the answer is.
+### 8.2 Strategy Schema & Rule Engine (C++)
 
-### 8.2 Feature Coverage for the Existing Universe (cheap, immediate)
+The engine work — all in the LibTorch-free build.
 
-The stopgap that fixes most real extension sessions without new ML:
+- **Parameterise existing templates:** `MovingAverageStrategy` windows, plus two new
+  transparent templates: RSI mean-reversion and N-day breakout. Position sizing and
+  stop-loss/take-profit as shared optional parameters (portfolio layer already does
+  risk sizing).
+- **`RuleStrategy`:** a bounded, composable rule evaluator —
+  `entry`/`exit` each a list of conditions AND-ed together, a condition being
+  `{indicator: SMA|EMA|RSI|PRICE|HIGH_N|LOW_N, period, op: <|>|crosses_above|crosses_below, value | other_indicator}`.
+  Capped: ≤ 8 conditions per side, whitelisted indicators and operators only.
+- **Strategy spec** is a JSON document; the binary accepts a spec file path alongside
+  the existing config. One canonical schema shared by API validation and the engine
+  parser (extend the existing no-dependency JSON approach from ADR-026).
+- **Invariant note (ADR):** `technicalIndicators.py` remains the single source of the
+  *ML feature* indicator logic. Strategy-level indicators computed inside the engine
+  (as `MovingAverageStrategy` already does) are a separate concern; the ADR records
+  this scope clarification plus cross-validation tests pinning C++ SMA/RSI values to
+  the Python implementations on a shared fixture, so the two can never silently drift.
+- Event-order invariant (`MARKET → SIGNAL → ORDER → FILL`) untouched; full unit
+  coverage for `RuleStrategy` in the existing ctest suite.
 
-- Run the feature pipeline across all 58 tickers already in `data/`, populating
-  `backtester/data/*_features.csv` (single source of indicator truth:
-  `technicalIndicators.py` — unchanged).
-- Add the generated set to the Docker image / Fly volume story (they are inputs, like
-  the model).
-- Cross-check: every curated event's primary ticker that is still listed has a feature
-  CSV; extend `test_context_ticker_hygiene.py` to assert it.
+### 8.3 API: Strategy-Aware Backtests
 
-**Deliverable:** curated Quick-Pick events stop falling back to AAPL.
+- `POST /api/backtest` gains an optional `strategy` field:
+  `{ "template": "ma_cross", "params": {...} }` or `{ "rules": {...} }`; omitted →
+  buy-and-hold vs. benchmark (the fastest honest default).
+- Pydantic schema mirrors the C++ spec exactly (bounded lists, whitelisted enums,
+  numeric ranges) — boundary validation per the house rule; spec size capped.
+- Response echoes the resolved strategy, always includes the benchmark series, and
+  keeps the Phase 7 shape otherwise (cache key extended with a strategy hash).
+- The experimental ML path stays reachable via `{ "template": "ml_transformer" }`
+  only where the server has the model + AAPL features; clearly labelled in the
+  response (`"experimental": true`).
 
-### 8.3 On-Demand Data Ingestion (arbitrary tickers)
+### 8.4 Extension: Editable Inputs & Strategy Builder
 
-Close Gap A for tickers we've never seen:
+- **Editable context:** ticker and date range pre-filled from extraction but editable
+  in the popup before running — the "user input to custom test a stock" path. Free-typed
+  tickers validated client-side with the same regex.
+- **Strategy panel:** template picker with parameter fields; a "custom rules" mode
+  rendering condition rows (indicator / period / operator / value) mapped 1:1 to the
+  RuleStrategy schema.
+- **Saved strategies:** named strategy specs persisted in `chrome.storage.sync`
+  (small JSON, well under quota), so a user's "my RSI dip-buyer" is one click on the
+  next article.
+- Results always render strategy-vs-benchmark; the ML option appears under an
+  "Experimental" divider with an inline caveat.
+- Node harness extended: schema round-trip, saved-strategy storage, input validation.
 
-- `research/data/fetcher.py` — fetch daily OHLCV for a requested ticker/date range
-  (primary: Stooq via pandas-datareader or yfinance; pick after a reliability/ToS
-  check — record as an ADR), then run the existing feature pipeline and cache the
-  result into `backtester/data/`.
-- Runner order becomes: exact CSV → **fetch-and-build** → ADR-028 fallback (now rare).
-- Constraints carried over from the hardening work: ticker regex already enforced at
-  the boundary; fetch gets a timeout + retry cap; per-run semaphore already bounds
-  concurrency; failures degrade to the existing fallback with the existing warning.
-- Cache policy: fetched features persist (they are reusable public data, not user
-  data — distinct from the ADR-040 run-archive TTL); a size cap keeps the Fly volume
-  bounded. Offline/dev mode: fetcher disabled via env, tests never hit the network.
+### 8.5 Speed Budget (measured, not aspirational)
 
-**Deliverable:** an article about any listed US ticker produces a backtest of *that
-ticker* within the 15 s budget.
+The "faster the better" requirement gets numbers and a test:
 
-### 8.4 Model Rethink Experiments
+| Path | Budget |
+|------|--------|
+| Cached ticker, any strategy | ≤ 3 s end-to-end |
+| Cold ticker (network fetch) | ≤ 10 s end-to-end |
+| Engine execution (daily bars, 1-year window) | ≤ 250 ms |
+| Hosted cold start (no LibTorch image) | ≤ 5 s to healthy |
 
-The deep dive proper. Candidates, cheapest first, all judged by the 8.1 harness:
+- LRU cache key becomes `(tickers, window, strategy_hash)`; warm-up pre-runs the
+  curated events under the default strategy only.
+- A timing harness in CI (marker-based, generous thresholds) catches regressions.
 
-1. **Target/loss engineering on the current architecture** — predict next-day *return*
-   (stationary) rather than price level; try classification (direction) with a
-   probability threshold vs. regression; this alone often dominates architecture
-   changes.
-2. **Shrink the transformer** — encoder-only + direct regression head (drop the decoder
-   and label_len machinery entirely), `d_model` 64–128, 1–2 layers. Expected artefact:
-   ≤ 2–3 MB, ~10× less compute for the same seq_len=30 window.
-3. **Linear-family challengers** — DLinear-style (per-feature linear over the window)
-   and the 8.1 ridge baseline promoted to a real candidate.
-4. **Gradient boosting** — LightGBM over window-aggregated features (no sequence model
-   at all). Strong tabular prior; trivially CPU-cheap.
-5. **Global multi-ticker training** — train one model across the 58-ticker universe
-   (ticker embedding or none) vs. today's per-ticker fit; more data per parameter is
-   the classic cure for overfit heavy models.
+### 8.6 Transformer → Experimental Track (containment, not deletion)
 
-Selection criterion (write into the report): best out-of-sample walk-forward Sharpe
-net of the existing slippage/commission model, **per unit of CPU inference cost**, with
-a hard budget: artefact ≤ 5 MB, ≤ 50 ms per 30-bar window on shared-cpu-1x. If a
-simpler model ties the transformer, the simpler model wins — that is a success, not a
-failure, and gets recorded as an ADR.
-
-### 8.5 Retrain, Export, and Contract Preservation
-
-- Winner is tuned with the existing Optuna sweep (`research/training/sweep.py`) and
-  validated with `walk_forward.py`; final artefact exported via `exportModel.py`.
-- **Hard invariants respected:** the 34-column feature order contract
-  (`pipeline.py` ↔ `MODEL_FEATURE_COLUMNS` ↔ `convert_scalers.py`) is unchanged unless
-  the experiments justify a feature change — in which case all three touch points move
-  in one commit and the C++ binary is rebuilt.
-- If the winner is non-torch (LightGBM), export via ONNX → a small inference shim, or
-  reconsider scope: keeping TorchScript-compatible candidates avoids C++ churn; decide
-  by ADR when the scoreboard is in.
-- `GET /api/health` gains a `model_version` field so deployed model provenance is
-  visible.
-
-### 8.6 Productise the Improvement
-
-- Extension: surface which symbol/data actually backed the result (the ADR-028 warning
-  already exists; promote it from small-print to a visible chip when a fallback
-  happened — it should now be rare).
-- Update README model section; retire stale claims; publish the 8.1 scoreboard in the
-  repo.
+- Default hosted image: no LibTorch, no `transformer.pt`, no scaler CSVs; the
+  experimental image variant keeps them (compose profile / build arg).
+- `ml_backtest`, the export pipeline, sweep, and walk-forward tooling remain for
+  research use; CLAUDE.md updated to reflect the two-track split.
+- Deferred until the experimental track earns attention: baseline scoreboard,
+  model-shrinking experiments, multi-ticker training (the previous Phase 8 draft's
+  ML deep-dive lives here as a backlog note, not a commitment).
 
 ---
 
 ## Exit Criteria
 
-- [ ] 8.1 scoreboard exists, reproducible via one command, covering ≥ 10 tickers and
-  ≥ 3 market regimes
-- [ ] Every still-listed curated-event primary ticker backtests on its own data
-  (no AAPL fallback), enforced by test
-- [ ] An article about an arbitrary S&P 500 ticker not previously on disk completes a
-  real-data backtest end-to-end within 15 s (cold fetch) / 5 s (cached)
-- [ ] Selected model beats or ties every baseline's out-of-sample Sharpe on the
-  majority of walk-forward windows, net of costs — with the decision recorded as an ADR
-- [ ] Model artefact ≤ 5 MB and ≤ 50 ms CPU inference per window (measured in 8.1
-  harness), or an explicit ADR accepting why not
-- [ ] Feature-column contract intact or migrated atomically with a rebuilt binary and
-  green C++ tests
-- [ ] Python coverage stays ≥ 80 %; fetcher fully tested offline via fixtures
+- [ ] Reading an article about any listed US ticker yields a backtest of **that
+  ticker's real data**; no silent symbol substitution anywhere in the transparent path
+- [ ] User can edit ticker/date in the popup and re-run on the same article
+- [ ] User can configure a template strategy, compose a custom rule strategy, save it
+  under a name, and run it on a fresh article in one click
+- [ ] Strategy spec validated identically at the API boundary and in the engine;
+  malformed specs fail with 422, never a 500
+- [ ] Speed budgets in 8.5 met and enforced by a CI timing test
+- [ ] Default hosted image contains no LibTorch and no model artefact; experimental
+  image variant retains the ML path, labelled as such end-to-end
+- [ ] C++ suite covers RuleStrategy (all operators, cross conditions, caps); Python
+  coverage ≥ 80 %; extension Node tests cover the builder round-trip
+- [ ] ADRs recorded: data provider, no-arbitrary-code decision, strategy-indicator
+  scope vs. `technicalIndicators.py`, ADR-028 semantics split
 
 ---
 
@@ -159,18 +159,21 @@ failure, and gets recorded as an ADR.
 
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
-| Data provider (yfinance/Stooq) rate-limits or breaks ToS for server-side use | Medium | High | Provider decision ADR up front; cache aggressively; Stooq/pandas-datareader fallback; degrade to ADR-028 path |
-| One-step-ahead daily returns are ~noise; nothing beats buy-and-hold net of costs | Medium | Medium | That result is itself shippable: pick the cheapest model, publish honest numbers — credibility is the product |
-| Lookahead leakage lurking in engineered features inflates all ML results | Medium | High | 8.1 includes a leakage audit of `technicalIndicators.py` (shift checks) before any conclusions |
-| Winner requires C++ contract changes (seq_len, features) | Low | Medium | Budgeted in 8.5; MLStrategy buffer + binary rebuild in the same PR |
-| Global multi-ticker model degrades AAPL-class liquid names | Low | Low | Scoreboard is per-ticker; keep per-ticker fine-tune as a variant |
+| Data provider rate-limits or blocks server-side fetching | Medium | High | Provider ADR with fallback provider; indefinite OHLCV cache makes each ticker a one-time cost |
+| Rule-engine scope creep ("add shorting! add options!") | High | Medium | v1 whitelist is fixed in the ADR; long-only + the listed indicators; extensions are future phases |
+| Users expect to paste code as a "custom strategy" | Medium | Low | Explicit out-of-scope ADR; UI copy frames rules as the custom mechanism |
+| C++/Python indicator drift (SMA/RSI computed in both) | Medium | Medium | Shared-fixture cross-validation tests pinning both implementations |
+| Strategy spec becomes a de-facto API contract that's hard to change | Medium | Medium | Version field in the spec from day one |
+| Curated event cards regress while transparent path lands | Low | Medium | Warm-up + quick-picks run the default strategy; ML card only in experimental builds |
 
 ---
 
 ## Definition of Done
 
-A user reads about any listed US stock, clicks the FAB, and gets a backtest of **that
-stock's actual data**, produced by a model whose out-of-sample edge over trivial
-baselines is documented in the repo — or, if no edge exists, by the cheapest model that
-ties, stated honestly. The 22 MB transformer either earns its place with evidence or is
-replaced by something smaller that does.
+A user reads a news story about any listed US stock, clicks the FAB, adjusts the
+detected ticker or dates if they want, picks "MA crossover" — or their own saved
+"RSI dip-buyer" built from rule rows — and within a few seconds sees how that strategy
+performed against just holding the stock through the event window, on the stock's real
+price history. The backtesting engine, not the model, is the product: small, fast,
+portable, and honest. The transformer is still there for the curious — clearly marked
+experimental, running only where its training data makes the answer meaningful.
