@@ -15,7 +15,8 @@ import logging
 import threading
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from .cors import add_cors
 from .runner import is_model_loaded, run_backtest, warmup_cache
@@ -46,6 +47,28 @@ app = FastAPI(
     lifespan=lifespan,
 )
 add_cors(app)
+
+# Reject oversized bodies before deserialisation (P1-8). 2 MB comfortably
+# exceeds the largest legitimate payload (MAX_RAW_TEXT_CHARS of UTF-8 text).
+MAX_BODY_BYTES = 2_000_000
+
+
+@app.middleware("http")
+async def limit_body_size(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > MAX_BODY_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": "Request body too large"},
+                )
+        except ValueError:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Invalid Content-Length header"},
+            )
+    return await call_next(request)
 
 
 # ---------------------------------------------------------------------------

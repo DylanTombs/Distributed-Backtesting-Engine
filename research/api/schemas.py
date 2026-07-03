@@ -4,7 +4,14 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# Boundary size caps (P1-8): fail fast on oversized payloads before any
+# processing. raw_text far exceeds the 8 000 chars used downstream but stays
+# well below anything that could pin CPU or memory.
+MAX_RAW_TEXT_CHARS = 200_000
+MAX_URL_CHARS = 2_048
+MAX_TICKERS = 20
 
 
 # ---------------------------------------------------------------------------
@@ -12,13 +19,17 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 # ---------------------------------------------------------------------------
 
 class ContextRequest(BaseModel):
-    url: Optional[str] = None
-    raw_text: Optional[str] = None
+    url: Optional[str] = Field(default=None, max_length=MAX_URL_CHARS)
+    raw_text: Optional[str] = Field(default=None, max_length=MAX_RAW_TEXT_CHARS)
 
-    @field_validator("url", "raw_text", mode="before")
+    @field_validator("url")
     @classmethod
-    def at_least_one(cls, v):
-        return v  # cross-field check is in has_content()
+    def url_scheme_must_be_http(cls, v: Optional[str]) -> Optional[str]:
+        # Boundary check only — deep SSRF validation (IP ranges, redirects)
+        # happens in research/context/scraper.py.
+        if v is not None and not v.lower().startswith(("http://", "https://")):
+            raise ValueError("url must use http or https")
+        return v
 
     def has_content(self) -> bool:
         return bool(self.url or self.raw_text)
@@ -39,7 +50,7 @@ class ContextResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class BacktestRequest(BaseModel):
-    tickers: list[str]
+    tickers: list[str] = Field(max_length=MAX_TICKERS)
     date_start: str    # YYYY-MM-DD
     date_end: str      # YYYY-MM-DD
     skip_train: bool = True

@@ -35,6 +35,40 @@ def _client() -> TestClient:
 # Validation tests (no mocking — pure schema enforcement)
 # ---------------------------------------------------------------------------
 
+class TestRequestSizeLimits:
+    """P1-8: oversized payloads are rejected at the boundary."""
+
+    def test_oversized_raw_text_returns_422(self):
+        from research.api.schemas import MAX_RAW_TEXT_CHARS
+        resp = _client().post("/api/context", json={
+            "raw_text": "a" * (MAX_RAW_TEXT_CHARS + 1),
+        })
+        assert resp.status_code == 422
+
+    def test_too_many_tickers_returns_422(self):
+        from research.api.schemas import MAX_TICKERS
+        resp = _client().post("/api/backtest", json={
+            **_VALID_PAYLOAD,
+            "tickers": ["AAPL"] * (MAX_TICKERS + 1),
+        })
+        assert resp.status_code == 422
+
+    def test_oversized_body_returns_413(self):
+        from research.api.app import MAX_BODY_BYTES
+        resp = _client().post(
+            "/api/context",
+            content=b"x" * (MAX_BODY_BYTES + 1),
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 413
+
+    def test_non_http_url_scheme_returns_422(self):
+        resp = _client().post("/api/context", json={
+            "url": "file:///etc/passwd",
+        })
+        assert resp.status_code == 422
+
+
 class TestBacktestValidation:
     def test_backtest_reversed_dates_returns_422(self):
         """model_validator on BacktestRequest rejects date_start > date_end."""
