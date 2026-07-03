@@ -112,3 +112,27 @@ services:
       - --host=0.0.0.0
       - --port=8502
       - --workers=1
+
+  # ---------------------------------------------------------------------------
+  # api-hosted: simulates the Fly.io production image locally (Phase 7.4)
+  #
+  #   docker compose --profile hosted up api-hosted
+  #
+  # Uses Dockerfile.api (bundled binary, no bind-mounted source) so what runs
+  # here is what ships. Models mount read-only like the Fly volume.
+  # ---------------------------------------------------------------------------
+  api-hosted:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: tradingtransformer-api-hosted:latest
+    profiles: [hosted]
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./models:/app/models:ro
+    environment:
+      - API_KEYS=${API_KEYS:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ALLOWED_EXTENSION_IDS=${ALLOWED_EXTENSION_IDS:-}
+      - MAX_CONCURRENT_BACKTESTS=2
