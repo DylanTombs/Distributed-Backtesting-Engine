@@ -76,6 +76,13 @@ class TestExtractDateRangeDateparser:
 # extractor.py — _llm_pass body (lines 138-170)
 # ---------------------------------------------------------------------------
 
+# Long enough to clear the _MIN_LLM_TEXT_CHARS guard in _llm_pass
+_ARTICLE = (
+    "Markets plunged today as investors reacted to the escalating crisis; "
+    "financial stocks led the decline across all major indices."
+)
+
+
 class TestLlmPass:
     def _make_anthropic_mock(self, response_json: dict, raw_text: str = None):
         """Return a mock anthropic module whose messages.create returns given JSON."""
@@ -111,7 +118,7 @@ class TestLlmPass:
         mock_anthropic = self._make_anthropic_mock(payload)
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
-                result = _llm_pass("The COVID crash hit markets hard")
+                result = _llm_pass(_ARTICLE)
         assert isinstance(result, ExtractionResult)
         assert result.event_label == "COVID crash"
         assert "AAPL" in result.tickers
@@ -125,7 +132,7 @@ class TestLlmPass:
         mock_anthropic = self._make_anthropic_mock(payload, raw_text=raw)
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
-                result = _llm_pass("Lehman Brothers collapsed")
+                result = _llm_pass(_ARTICLE)
         assert result is not None
         assert result.event_label == "GFC"
 
@@ -135,7 +142,7 @@ class TestLlmPass:
         mock_anthropic = self._make_anthropic_mock(payload)
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
-                result = _llm_pass("Some text")
+                result = _llm_pass(_ARTICLE)
         assert isinstance(result.tickers, list)
         assert "AAPL" in result.tickers
 
@@ -144,12 +151,113 @@ class TestLlmPass:
         mock_anthropic = self._make_anthropic_mock({}, raw_text="not valid json {{{{")
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
-                result = _llm_pass("Some text")
+                result = _llm_pass(_ARTICLE)
         assert result is None
 
     def test_anthropic_import_error_returns_none(self):
         from research.context.extractor import _llm_pass
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             with patch.dict(sys.modules, {"anthropic": None}):
-                result = _llm_pass("Some text")
+                result = _llm_pass(_ARTICLE)
         assert result is None
+
+
+class TestLlmHardening(TestLlmPass):
+    """P1-6/P1-7 regressions: guards on LLM input and validation of output."""
+
+    def _call(self, payload, text=_ARTICLE, raw_text=None):
+        from research.context.extractor import _llm_pass
+        mock_anthropic = self._make_anthropic_mock(payload, raw_text=raw_text)
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+            with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
+                result = _llm_pass(text)
+        return result, mock_anthropic
+
+    def test_short_text_skips_paid_llm_call(self):
+        result, mock_anthropic = self._call({}, text="Too short")
+        assert result is None
+        mock_anthropic.Anthropic.assert_not_called()
+
+    def test_client_created_with_timeout_and_retry_cap(self):
+        from research.context.extractor import _LLM_TIMEOUT_S, _LLM_MAX_RETRIES
+        _, mock_anthropic = self._call({"event_label": "x", "tickers": []})
+        kwargs = mock_anthropic.Anthropic.call_args.kwargs
+        assert kwargs["timeout"] == _LLM_TIMEOUT_S
+        assert kwargs["max_retries"] == _LLM_MAX_RETRIES
+
+    def test_article_text_is_delimited_in_user_message(self):
+        _, mock_anthropic = self._call({"event_label": "x", "tickers": []})
+        client = mock_anthropic.Anthropic.return_value
+        content = client.messages.create.call_args.kwargs["messages"][0]["content"]
+        assert content.startswith("<article>")
+        assert content.rstrip().endswith("</article>")
+
+    def test_non_string_tickers_are_skipped_not_500(self):
+        payload = {
+            "event_label": "Test",
+            "tickers": ["AAPL", 42, None, {"t": "x"}, "MSFT"],
+            "date_start": None,
+            "date_end": None,
+        }
+        result, _ = self._call(payload)
+        assert result.tickers == ["AAPL", "MSFT"]
+
+    def test_invalid_ticker_shapes_are_dropped(self):
+        payload = {
+            "event_label": "Test",
+            "tickers": ["../etc", "TOOLONGNAME", "aapl", "<img>"],
+            "date_start": None,
+            "date_end": None,
+        }
+        result, _ = self._call(payload)
+        # "aapl" upcases to a valid ticker; the rest fail the boundary regex
+        assert result.tickers == ["AAPL"]
+
+    def test_invalid_dates_degrade_to_null(self):
+        payload = {
+            "event_label": "Test",
+            "tickers": [],
+            "date_start": "not-a-date",
+            "date_end": "2020-13-45",
+        }
+        result, _ = self._call(payload)
+        assert result.date_start is None
+        assert result.date_end is None
+
+    def test_oversized_label_is_truncated(self):
+        payload = {"event_label": "L" * 500, "tickers": [],
+                   "date_start": None, "date_end": None}
+        result, _ = self._call(payload)
+        assert len(result.event_label) <= 120
+
+    def test_non_object_json_is_discarded(self):
+        result, _ = self._call({}, raw_text='["a", "list"]')
+        assert result is None
+
+    def test_confidence_exact_boundaries_per_adr_031(self):
+        # All fields valid → capped at exactly 0.80
+        full = {
+            "event_label": "COVID crash",
+            "tickers": ["AAPL"],
+            "date_start": "2020-02-19",
+            "date_end": "2020-03-23",
+        }
+        result, _ = self._call(full)
+        assert result.confidence == 0.80
+
+        # All fields null → floor of exactly 0.4
+        empty = {"event_label": None, "tickers": [],
+                 "date_start": None, "date_end": None}
+        result, _ = self._call(empty)
+        assert result.confidence == 0.4
+
+    def test_invalid_fields_earn_no_confidence_credit(self):
+        # Invalid dates/tickers must not raise confidence above the floor
+        payload = {
+            "event_label": None,
+            "tickers": [12345, "not a ticker!"],
+            "date_start": "soonish",
+            "date_end": "later",
+        }
+        result, _ = self._call(payload)
+        assert result.confidence == 0.4

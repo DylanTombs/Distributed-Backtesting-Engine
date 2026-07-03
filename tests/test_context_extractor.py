@@ -92,6 +92,70 @@ class TestExtract:
         assert 0.0 <= result.confidence <= 1.0
 
 
+class TestMergeSemantics:
+    """P2-7: merged responses must stay internally consistent."""
+
+    def _rule(self, **overrides) -> ExtractionResult:
+        base = dict(
+            event_label="COVID-19 Crash",
+            event_key="covid_crash",
+            tickers=[],
+            date_start="2020-02-19",
+            date_end="2020-03-23",
+            confidence=0.55,
+            source="rules",
+        )
+        return ExtractionResult(**{**base, **overrides})
+
+    def _llm(self, **overrides) -> ExtractionResult:
+        base = dict(
+            event_label=None,
+            event_key=None,
+            tickers=["AAPL"],
+            date_start="2021-01-01",
+            date_end="2021-06-30",
+            confidence=0.70,
+            source="llm",
+        )
+        return ExtractionResult(**{**base, **overrides})
+
+    def test_differing_llm_label_drops_stale_event_key(self):
+        from research.context.extractor import _merge
+        merged = _merge(self._rule(), self._llm(event_label="Something Else"))
+        assert merged.event_key is None
+        assert merged.event_label == "Something Else"
+
+    def test_curated_dates_win_over_llm_dates_when_event_stands(self):
+        from research.context.extractor import _merge
+        merged = _merge(self._rule(), self._llm())
+        assert merged.event_key == "covid_crash"
+        assert merged.event_label == "COVID-19 Crash"
+        assert merged.date_start == "2020-02-19"
+        assert merged.date_end == "2020-03-23"
+
+    def test_matching_labels_keep_curated_key_and_window(self):
+        from research.context.extractor import _merge
+        merged = _merge(
+            self._rule(), self._llm(event_label="COVID-19 Crash")
+        )
+        assert merged.event_key == "covid_crash"
+        assert merged.date_start == "2020-02-19"
+
+    def test_no_rule_event_takes_llm_fields(self):
+        from research.context.extractor import _merge
+        rule = self._rule(event_key=None, event_label=None,
+                          date_start=None, date_end=None, confidence=0.2)
+        merged = _merge(rule, self._llm(event_label="New Event"))
+        assert merged.event_key is None
+        assert merged.event_label == "New Event"
+        assert merged.date_start == "2021-01-01"
+
+    def test_confidence_is_max_of_both_passes(self):
+        from research.context.extractor import _merge
+        merged = _merge(self._rule(confidence=0.55), self._llm(confidence=0.70))
+        assert merged.confidence == 0.70
+
+
 class TestApiSchemas:
     """Smoke tests for API schema validation."""
 
