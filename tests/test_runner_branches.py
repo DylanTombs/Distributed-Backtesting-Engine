@@ -104,3 +104,71 @@ class TestStaleOutputs:
         equities = [p.equity for p in result.equity]
         assert 999999.0 not in equities
         assert equities[0] == 100000.0
+
+
+# ---------------------------------------------------------------------------
+# P2-1: client-input failures raise BacktestInputError with sanitised messages
+# ---------------------------------------------------------------------------
+
+class TestErrorTaxonomy:
+    def test_empty_window_raises_input_error(self, env):
+        with pytest.raises(runner.BacktestInputError, match="No data for"):
+            runner.run_backtest(["AAPL"], "1980-01-01", "1980-02-01")
+
+    def test_no_feature_csvs_message_contains_no_paths(self, env, tmp_path):
+        (env.data / "AAPL_features.csv").unlink()
+        with pytest.raises(runner.BacktestInputError) as exc_info:
+            runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05")
+        assert str(tmp_path) not in str(exc_info.value)
+        assert "pipeline" not in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# P2-3: warm-up distinguishes binary-missing from per-event failures
+# ---------------------------------------------------------------------------
+
+class TestWarmupLogging:
+    def test_missing_binary_skips_warmup_with_single_warning(
+        self, env, monkeypatch, caplog
+    ):
+        import logging
+
+        monkeypatch.setattr(runner, "BINARY", env.project / "does_not_exist")
+        with caplog.at_level(logging.WARNING, logger="research.api.runner"):
+            runner.warmup_cache()
+        assert "skipping pre-warm" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# P2-6: archived run directories are pruned after the TTL
+# ---------------------------------------------------------------------------
+
+class TestRunArchivePruning:
+    def test_expired_run_dirs_are_pruned_fresh_ones_kept(self, env):
+        import time as time_mod
+
+        runs_root = env.output / "runs"
+        old = runs_root / "20200101_000000"
+        fresh = runs_root / "20990101_000000"
+        old.mkdir(parents=True)
+        fresh.mkdir(parents=True)
+        expired = time_mod.time() - (runner._RUNS_TTL_DAYS + 1) * 86_400
+        os.utime(old, (expired, expired))
+
+        runner._prune_old_runs(runs_root)
+
+        assert not old.exists()
+        assert fresh.exists()
+
+    def test_backtest_run_triggers_pruning(self, env):
+        import time as time_mod
+
+        runs_root = env.output / "runs"
+        old = runs_root / "20200101_000000"
+        old.mkdir(parents=True)
+        expired = time_mod.time() - (runner._RUNS_TTL_DAYS + 1) * 86_400
+        os.utime(old, (expired, expired))
+
+        runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05")
+
+        assert not old.exists()

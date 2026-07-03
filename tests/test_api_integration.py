@@ -171,10 +171,40 @@ class TestBacktestHappyPath:
         assert "warning" in body
         assert body["warning"] is None
 
-    def test_backtest_runtime_error_returns_500(self):
-        """run_backtest raising RuntimeError maps to 500."""
+    def test_backtest_runtime_error_returns_sanitised_500(self):
+        """P2-1: server-fault details (paths, stderr) never reach the client."""
+        secret_detail = "ml_backtest failed: /Users/someone/secret/path stderr dump"
         with patch("research.api.app.is_model_loaded", return_value=True), \
-             patch("research.api.app.run_backtest", side_effect=RuntimeError("binary missing")):
+             patch("research.api.app.run_backtest", side_effect=RuntimeError(secret_detail)):
             resp = _client().post("/api/backtest", json=_VALID_PAYLOAD)
         assert resp.status_code == 500
-        assert "binary missing" in resp.json()["detail"]
+        assert "secret" not in resp.json()["detail"]
+        assert "/Users" not in resp.json()["detail"]
+
+    def test_backtest_input_error_returns_422(self):
+        """P2-1: client-input problems are 4xx, not 500."""
+        from research.api.runner import BacktestInputError
+        msg = "No data for AAPL in [1980-01-01 → 1980-02-01]."
+        with patch("research.api.app.is_model_loaded", return_value=True), \
+             patch("research.api.app.run_backtest", side_effect=BacktestInputError(msg)):
+            resp = _client().post("/api/backtest", json=_VALID_PAYLOAD)
+        assert resp.status_code == 422
+        assert msg in resp.json()["detail"]
+
+    def test_backtest_unexpected_exception_returns_generic_500(self):
+        """P2-2: non-RuntimeError surprises (e.g. wrong-arch binary → OSError)
+        map to a generic 500 instead of escaping as a bare exception."""
+        with patch("research.api.app.is_model_loaded", return_value=True), \
+             patch("research.api.app.run_backtest",
+                   side_effect=OSError(8, "Exec format error")):
+            resp = _client().post("/api/backtest", json=_VALID_PAYLOAD)
+        assert resp.status_code == 500
+        assert "Exec format" not in resp.json()["detail"]
+
+    def test_context_unexpected_exception_returns_generic_500(self):
+        """P2-2: adversarial text crashing the extractor yields a generic 500."""
+        with patch("research.context.extractor.extract",
+                   side_effect=ValueError("boom from adversarial text")):
+            resp = _client().post("/api/context", json={"raw_text": "x" * 100})
+        assert resp.status_code == 500
+        assert "boom" not in resp.json()["detail"]

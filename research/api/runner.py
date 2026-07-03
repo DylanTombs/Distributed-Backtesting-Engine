@@ -42,6 +42,17 @@ LOOKBACK_BARS = 60   # bars of history prepended so model has seq_len context
 
 _LRU_MAX = 50
 
+# Archived run directories are pruned after this many days (P2-6) so the
+# hosted deployment's "request-level data only, 7-day TTL" privacy stance
+# holds without manual cleanup.
+_RUNS_TTL_DAYS = 7
+
+
+class BacktestInputError(RuntimeError):
+    """A backtest failed because of the client's request (bad window, unknown
+    tickers) rather than a server fault. Messages are safe to return to the
+    client verbatim — no paths, no build instructions."""
+
 # Serialise binary invocations: the C++ binary always writes ml_equity.csv and
 # ml_trades.csv to PROJECT_ROOT (its CWD), so concurrent requests would race on
 # those files.  The LRU cache lookup remains concurrent — only _execute() is
@@ -118,6 +129,16 @@ def warmup_cache() -> None:
     """
     from research.context.events import EVENTS  # local import avoids circular dep
 
+    # Distinguish "binary not built" (expected in CI/dev) from per-event
+    # failures (a production incident on a hosted deploy) — a 0/41 prime
+    # must never look healthy in the logs (P2-3).
+    if not BINARY.exists():
+        logger.warning(
+            "warmup_cache: ml_backtest binary not found at %s — "
+            "skipping pre-warm entirely", BINARY,
+        )
+        return
+
     logger.info("warmup_cache: starting pre-warm for %d events", len(EVENTS))
     hits = 0
     for key, ev in EVENTS.items():
@@ -130,7 +151,7 @@ def warmup_cache() -> None:
             hits += 1
             logger.debug("warmup_cache: primed %s", key)
         except Exception as exc:  # noqa: BLE001
-            logger.debug("warmup_cache: skipped %s — %s", key, exc)
+            logger.warning("warmup_cache: failed to prime %s — %s", key, exc)
     logger.info("warmup_cache: complete — %d/%d events primed", hits, len(EVENTS))
 
 
@@ -195,9 +216,9 @@ def _resolve_symbol(tickers: list[str]) -> tuple[str, Path, Optional[str]]:
         )
         return symbol, csvs[0], warning_msg
 
-    raise RuntimeError(
-        f"No feature CSVs found in {DATA_DIR}. "
-        "Run feature engineering first: python research/features/pipeline.py"
+    logger.error("No feature CSVs found in %s — run the feature pipeline", DATA_DIR)
+    raise BacktestInputError(
+        "No market data is available on the server for the requested tickers."
     )
 
 
@@ -221,9 +242,9 @@ def _filter_csv(
     window_rows = df[window_mask]
 
     if window_rows.empty:
-        raise RuntimeError(
+        raise BacktestInputError(
             f"No data for {symbol} in [{date_start} → {date_end}]. "
-            f"The feature CSV covers "
+            f"Available data covers "
             f"{df[date_col].min().date()} – {df[date_col].max().date()}."
         )
 
@@ -301,7 +322,10 @@ def _archive_and_read(
     if not equity_src.exists():
         raise RuntimeError("ml_backtest produced no output")
 
-    run_dir = OUTPUT_DIR / "runs" / run_id
+    runs_root = OUTPUT_DIR / "runs"
+    _prune_old_runs(runs_root)
+
+    run_dir = runs_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
     for src, name in [(equity_src, "ml_equity.csv"), (trades_src, "ml_trades.csv")]:
@@ -323,6 +347,24 @@ def _archive_and_read(
         cached=False,
         warning=warning,
     )
+
+
+def _prune_old_runs(runs_root: Path, ttl_days: int = _RUNS_TTL_DAYS) -> None:
+    """Delete archived run directories older than ``ttl_days`` (P2-6).
+
+    Best-effort: failures are logged, never raised — pruning must not break
+    a live backtest request.
+    """
+    if not runs_root.exists():
+        return
+    cutoff = time.time() - ttl_days * 86_400
+    try:
+        for entry in runs_root.iterdir():
+            if entry.is_dir() and entry.stat().st_mtime < cutoff:
+                shutil.rmtree(entry, ignore_errors=True)
+                logger.info("Pruned expired run archive %s", entry.name)
+    except OSError as exc:
+        logger.warning("Run-archive pruning failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
