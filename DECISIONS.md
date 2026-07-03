@@ -489,6 +489,49 @@ The 0.6 threshold is calibrated so that:
 
 ---
 
+## Phase 8 — On-the-Fly Backtesting
+
+### ADR-045: Stooq plain-CSV endpoint for on-demand OHLCV; cache-forever with a daily re-fetch guard
+
+**Decision:** `research/data/fetcher.py` fetches full daily history from Stooq's keyless CSV endpoint (`stooq.com/q/d/l/?s={ticker}.us&i=d`) over the already-present `httpx` — no new dependency, no API key, no SDK. Fetched files persist indefinitely under `backtester/data/ohlcv/` (atomic tmp-then-rename writes); a fetch happens only when the cache is missing or does not cover the requested end date, with a same-day re-fetch guard for symbols the provider doesn't serve. `DATA_FETCH_DISABLED=1` makes the module cache-only; an autouse pytest fixture sets it so tests are network-proof by construction.
+
+**Rationale:** yfinance adds a dependency wrapping an unofficial API whose ToS position for server-side use is murkier, and it breaks periodically. Stooq's CSV endpoint is boring, keyless, and returns the entire listing history in one ~100 KB request — which makes cache-forever the natural policy: public market data is not user data (the ADR-040 TTL does not apply), and each ticker becomes a one-time network cost per deployment.
+
+**Trade-offs:**
+- Stooq's US coverage has gaps (some delisted symbols, some OTC); the honest-422 path (ADR-047) is the designed fallback.
+- Cached history goes stale for windows ending "today"; the coverage check re-fetches exactly then, so only current-events queries pay the network round-trip.
+- The container-filesystem cache is lost on redeploy; acceptable now, move to the Fly volume if cold caches ever hurt.
+
+---
+
+### ADR-046: Custom strategies are a bounded rule schema — never code; one canonical schema, flat handoff to the engine
+
+**Decision:** User-defined strategies are AND-ed entry/exit condition lists over whitelisted indicators (`PRICE`, `SMA`, `EMA`, `RSI`, `HIGH_N`, `LOW_N`) and operators (`<`, `>`, `crosses_above`, `crosses_below`), long-only, ≤ 8 conditions per side, periods 2–250, versioned (`version: 1`). Arbitrary user code (Python/JS/expressions) is explicitly rejected as a feature. The canonical schema is the Pydantic model; the popup mirrors it client-side for friendly errors, and the API serialises validated specs into a flat line format (`entry: SMA:10 crosses_above SMA:50`) parsed by the C++ `RuleSpec` — matching the existing config-file style (ADR-026) rather than embedding a C++ JSON parser. Templates (`ma_cross`, `rsi_reversion`, `breakout`, `buy_hold`) are canned rule sets; the engine knows only rules.
+
+**Scope clarification of the indicator invariant:** `technicalIndicators.py` remains the single source of truth for the *ML feature* pipeline. Strategy-level indicators computed inside the engine are a separate concern that predates this phase (`MovingAverageStrategy`). C++ RSI is Cutler's (simple-average) variant, deterministic from the rolling window; a shared-fixture cross-validation test against the Python implementations is planned follow-up work.
+
+**Rationale:** Executing user code server-side is a sandboxing problem with no cheap safe answer — a bounded schema delivers the expressiveness users actually asked for ("buy when RSI dips, sell when it recovers") with a validation story that is identical at every boundary: popup, Pydantic, C++ parser. Three enforcement points, one shape.
+
+**Trade-offs:**
+- No shorting, OR-logic, position sizing rules, or non-price indicators in v1 — the whitelist is the contract, extensions bump the spec version.
+- Two indicator implementations (engine vs. Python features) can drift for RSI variants; contained by the planned cross-validation fixture and by the engine's variant being documented in `RuleStrategy.hpp`.
+
+---
+
+### ADR-047: The transparent path fails honestly — ADR-028 substitution and the model gate are scoped to the experimental ML path
+
+**Decision:** The default (rule-strategy) backtest path resolves data for the *requested* tickers via the fetcher and returns a 422 when none is obtainable. It never substitutes another symbol's data. ADR-028's substitute-with-warning behaviour and the "model not loaded → 400" gate now apply only when the client explicitly requests `{"template": "ml_transformer"}` — which is flagged `experimental: true` in every response and labelled in the extension UI. The default hosted image ships neither LibTorch nor the model artefact.
+
+**Rationale:** ADR-028 existed because feature CSVs were scarce (one symbol, in practice) and *some* answer beat none for a demo. With on-demand OHLCV the scarcity is gone, and a user asking about NVDA who receives AAPL's equity curve — however clearly warned — has been given a wrong answer with a footnote. The ML path keeps the old semantics because its inputs (34-feature CSVs, AAPL-trained weights) genuinely cannot be conjured for arbitrary symbols; the experimental label makes that limitation part of the product surface instead of a surprise.
+
+**Trade-offs:**
+- Users on unlisted/delisted symbols now get an error instead of a proxy result; the curated-event ticker lists (ADR-041's live-proxy invariant) keep Quick Picks working.
+- Two path-dependent behaviours for "data missing" — acceptable because the paths are explicitly selected and the response schema says which one ran.
+
+---
+
+## Chrome Extension
+
 ### ADR-035: All API calls routed through service worker; null removed from CORS
 
 **Decision:** `popup.js` and `content.js` never call the FastAPI bridge directly. All network requests go through `background.js` (the Manifest V3 service worker) via `chrome.runtime.sendMessage`. Separately, `"null"` was removed from `_ALLOWED_ORIGINS` in `cors.py`; the regex `chrome-extension://.*` covers extension requests instead.

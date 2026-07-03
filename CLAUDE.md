@@ -131,8 +131,14 @@ Run at: immediately after the user signs off on an audit report.
 
 ## Current State
 
-Active branch: `feat/post-audit-hardening`  
-Active phase: `PHASE_7.md` — Web Store submission and hosted deployment  
+Active branch: `feat/phase-8-custom-strategies` (stacked on `feat/phase-7-hosted-deployment`)  
+Active phase: `PHASE_8.md` — on-the-fly backtesting: real tickers, custom strategies  
+Phase 7: code complete (settings/auth/rate limiting/per-run dirs/deploy scaffolding); 7.6 CWS submission pending  
 Phase 6: complete (browser extension + post-audit hardening)  
 Phases 1–5: complete, do not modify their phase files  
-Pre-compiled binary: `backtester/ml_backtest` — rebuild only when C++ strategy or execution code changes
+
+Two-track engine (Phase 8):
+- `backtester/backtest` — transparent rule strategies (RuleStrategy), no LibTorch; the product path. Data: on-demand OHLCV via `research/data/fetcher.py`
+- `backtester/ml_backtest` — experimental ML strategy (LibTorch + transformer.pt), AAPL-trained; opt-in via `{"template": "ml_transformer"}`, flagged `experimental` end-to-end
+
+Both pre-compiled binaries are tracked — rebuild only when C++ strategy or execution code changes
