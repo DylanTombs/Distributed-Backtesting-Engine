@@ -12,11 +12,14 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+import threading
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from .cors import add_cors
-from .runner import is_model_loaded, run_backtest
+from .runner import BacktestInputError, is_model_loaded, run_backtest, warmup_cache
 from .schemas import (
     BacktestRequest,
     BacktestResponse,
@@ -29,12 +32,43 @@ from .schemas import (
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):  # noqa: ARG001
+    t = threading.Thread(target=warmup_cache, daemon=True, name="cache-warmup")
+    t.start()
+    yield
+
+
 app = FastAPI(
     title="TradingTransformer Contextual Backtest API",
     version="0.1.0",
     description="Bridge between the browser extension and the backtesting pipeline.",
+    lifespan=lifespan,
 )
 add_cors(app)
+
+# Reject oversized bodies before deserialisation (P1-8). 2 MB comfortably
+# exceeds the largest legitimate payload (MAX_RAW_TEXT_CHARS of UTF-8 text).
+MAX_BODY_BYTES = 2_000_000
+
+
+@app.middleware("http")
+async def limit_body_size(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > MAX_BODY_BYTES:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": "Request body too large"},
+                )
+        except ValueError:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Invalid Content-Length header"},
+            )
+    return await call_next(request)
 
 
 # ---------------------------------------------------------------------------
@@ -79,18 +113,29 @@ def extract_context(req: ContextRequest) -> ContextResponse:
     from research.context.scraper import clean_raw_text, fetch_article
     from research.context.extractor import extract
 
-    # Resolve text: raw_text from extension takes priority (handles paywalls)
-    if req.raw_text:
-        text = clean_raw_text(req.raw_text)
-    else:
-        text = fetch_article(req.url)
-        if not text:
-            raise HTTPException(
-                status_code=422,
-                detail="Could not fetch article text. Send raw_text instead.",
-            )
+    # Unexpected extraction failures must surface as a generic 500 with full
+    # detail server-side only — adversarial page text must not 500 with a
+    # stack-derived message (P2-2).
+    try:
+        # Resolve text: raw_text from extension takes priority (handles paywalls)
+        if req.raw_text:
+            text = clean_raw_text(req.raw_text)
+        else:
+            text = fetch_article(req.url)
+            if not text:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Could not fetch article text. Send raw_text instead.",
+                )
 
-    result = extract(text)
+        result = extract(text)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Context extraction failed")
+        raise HTTPException(
+            status_code=500, detail="Context extraction failed unexpectedly."
+        ) from exc
 
     if result.confidence < 0.15:
         raise HTTPException(
@@ -124,12 +169,22 @@ def trigger_backtest(req: BacktestRequest) -> BacktestResponse:
             ),
         )
 
+    # Error taxonomy (P2-1/P2-2): client-input problems return 422 with a
+    # sanitised message; every server fault — including non-RuntimeError
+    # surprises like a wrong-arch binary (OSError) or a corrupt CSV — returns
+    # a generic 500. Full detail is logged server-side only.
     try:
         return run_backtest(
             tickers=req.tickers,
             date_start=req.date_start,
             date_end=req.date_end,
         )
-    except RuntimeError as exc:
+    except BacktestInputError as exc:
+        logger.info("Backtest rejected: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
         logger.exception("Backtest failed")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=500,
+            detail="Backtest execution failed. See server logs for details.",
+        ) from exc

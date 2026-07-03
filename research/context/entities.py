@@ -6,9 +6,12 @@ Two extractors are provided:
 """
 from __future__ import annotations
 
+import logging
 import re
 from datetime import timedelta
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Ticker allow-list  (S&P 500 + NASDAQ 100 representative set)
@@ -39,7 +42,7 @@ _SP500_TICKERS: frozenset[str] = frozenset({
     "BABA", "JD", "PDD", "BIDU", "NIO", "XPEV", "LI",
     "LMT", "RTX", "NOC", "GD", "BA", "HII",
     "TWTR", "SNAP", "PINS", "LYFT", "UBER", "ABNB",
-    "MUSK", "HOOD", "SOFI",
+    "HOOD", "SOFI",
     # Additional major tickers
     "MSFT", "AAPL", "GOOGL", "AMZN", "META", "NFLX", "TSLA",
 })
@@ -124,6 +127,10 @@ def extract_date_range(text: str) -> tuple[Optional[str], Optional[str]]:
 
     except ImportError:
         pass
+    except Exception as exc:  # noqa: BLE001
+        # dateparser can raise on adversarial or degenerate date phrases —
+        # degrade to the regex fallback instead of 500-ing the request (P2-2)
+        logger.warning("dateparser failed — falling back to regex: %s", exc)
 
     # Regex-only fallback: grab a 4-digit year and return ±6-month window
     year_m = re.search(r'\b(19[5-9]\d|20[0-2]\d)\b', text)

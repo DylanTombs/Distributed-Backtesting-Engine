@@ -40,7 +40,18 @@ MODEL_DIR     = PROJECT_ROOT / "models"
 OUTPUT_DIR    = PROJECT_ROOT / "output"
 LOOKBACK_BARS = 60   # bars of history prepended so model has seq_len context
 
-_LRU_MAX = 20
+_LRU_MAX = 50
+
+# Archived run directories are pruned after this many days (P2-6) so the
+# hosted deployment's "request-level data only, 7-day TTL" privacy stance
+# holds without manual cleanup.
+_RUNS_TTL_DAYS = 7
+
+
+class BacktestInputError(RuntimeError):
+    """A backtest failed because of the client's request (bad window, unknown
+    tickers) rather than a server fault. Messages are safe to return to the
+    client verbatim — no paths, no build instructions."""
 
 # Serialise binary invocations: the C++ binary always writes ml_equity.csv and
 # ml_trades.csv to PROJECT_ROOT (its CWD), so concurrent requests would race on
@@ -54,21 +65,31 @@ _binary_lock = threading.Lock()
 # ---------------------------------------------------------------------------
 
 class _LRUCache:
+    """LRU cache safe for concurrent access.
+
+    The warm-up daemon thread (ADR-033) writes entries while FastAPI
+    threadpool workers read and write concurrently, so every compound
+    OrderedDict operation must hold the lock (P0-2).
+    """
+
     def __init__(self, max_size: int):
         self._cache: OrderedDict = OrderedDict()
         self._max = max_size
+        self._lock = threading.Lock()
 
     def get(self, key: str) -> Optional[BacktestResponse]:
-        if key in self._cache:
-            self._cache.move_to_end(key)
-            return self._cache[key]
-        return None
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                return self._cache[key]
+            return None
 
     def put(self, key: str, value: BacktestResponse) -> None:
-        self._cache[key] = value
-        self._cache.move_to_end(key)
-        if len(self._cache) > self._max:
-            self._cache.popitem(last=False)
+        with self._lock:
+            self._cache[key] = value
+            self._cache.move_to_end(key)
+            if len(self._cache) > self._max:
+                self._cache.popitem(last=False)
 
 
 _cache = _LRUCache(_LRU_MAX)
@@ -99,6 +120,41 @@ def run_backtest(
     return result
 
 
+def warmup_cache() -> None:
+    """Pre-populate the LRU cache for every curated event.
+
+    Runs in a background daemon thread at startup.  Each event is attempted
+    independently — a failure (missing binary, CSV out of range, etc.) is
+    logged and skipped so the remaining events still warm up.
+    """
+    from research.context.events import EVENTS  # local import avoids circular dep
+
+    # Distinguish "binary not built" (expected in CI/dev) from per-event
+    # failures (a production incident on a hosted deploy) — a 0/41 prime
+    # must never look healthy in the logs (P2-3).
+    if not BINARY.exists():
+        logger.warning(
+            "warmup_cache: ml_backtest binary not found at %s — "
+            "skipping pre-warm entirely", BINARY,
+        )
+        return
+
+    logger.info("warmup_cache: starting pre-warm for %d events", len(EVENTS))
+    hits = 0
+    for key, ev in EVENTS.items():
+        try:
+            run_backtest(
+                tickers=ev.tickers,
+                date_start=ev.date_start,
+                date_end=ev.date_end,
+            )
+            hits += 1
+            logger.debug("warmup_cache: primed %s", key)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("warmup_cache: failed to prime %s — %s", key, exc)
+    logger.info("warmup_cache: complete — %d/%d events primed", hits, len(EVENTS))
+
+
 # ---------------------------------------------------------------------------
 # Execution
 # ---------------------------------------------------------------------------
@@ -112,6 +168,11 @@ def _execute(tickers: list[str], date_start: str, date_end: str) -> BacktestResp
 
     # Find the best available symbol with a feature CSV on disk
     symbol, src_csv, warning = _resolve_symbol(tickers)
+
+    # Remove any output files left behind by a previous invocation so a run
+    # that writes nothing can never be mistaken for a fresh result (P0-1).
+    (PROJECT_ROOT / "ml_equity.csv").unlink(missing_ok=True)
+    (PROJECT_ROOT / "ml_trades.csv").unlink(missing_ok=True)
 
     tmp_dir = Path(tempfile.mkdtemp(prefix="tt_backtest_"))
     try:
@@ -155,9 +216,9 @@ def _resolve_symbol(tickers: list[str]) -> tuple[str, Path, Optional[str]]:
         )
         return symbol, csvs[0], warning_msg
 
-    raise RuntimeError(
-        f"No feature CSVs found in {DATA_DIR}. "
-        "Run feature engineering first: python research/features/pipeline.py"
+    logger.error("No feature CSVs found in %s — run the feature pipeline", DATA_DIR)
+    raise BacktestInputError(
+        "No market data is available on the server for the requested tickers."
     )
 
 
@@ -181,9 +242,9 @@ def _filter_csv(
     window_rows = df[window_mask]
 
     if window_rows.empty:
-        raise RuntimeError(
+        raise BacktestInputError(
             f"No data for {symbol} in [{date_start} → {date_end}]. "
-            f"The feature CSV covers "
+            f"Available data covers "
             f"{df[date_col].min().date()} – {df[date_col].max().date()}."
         )
 
@@ -255,7 +316,16 @@ def _archive_and_read(
     equity_src = PROJECT_ROOT / "ml_equity.csv"
     trades_src = PROJECT_ROOT / "ml_trades.csv"
 
-    run_dir = OUTPUT_DIR / "runs" / run_id
+    # _execute() unlinks both files before the run, so absence here means the
+    # binary exited 0 without producing output — fail loudly rather than
+    # returning an empty (or previously stale) result (P0-1).
+    if not equity_src.exists():
+        raise RuntimeError("ml_backtest produced no output")
+
+    runs_root = OUTPUT_DIR / "runs"
+    _prune_old_runs(runs_root)
+
+    run_dir = runs_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
     for src, name in [(equity_src, "ml_equity.csv"), (trades_src, "ml_trades.csv")]:
@@ -277,6 +347,24 @@ def _archive_and_read(
         cached=False,
         warning=warning,
     )
+
+
+def _prune_old_runs(runs_root: Path, ttl_days: int = _RUNS_TTL_DAYS) -> None:
+    """Delete archived run directories older than ``ttl_days`` (P2-6).
+
+    Best-effort: failures are logged, never raised — pruning must not break
+    a live backtest request.
+    """
+    if not runs_root.exists():
+        return
+    cutoff = time.time() - ttl_days * 86_400
+    try:
+        for entry in runs_root.iterdir():
+            if entry.is_dir() and entry.stat().st_mtime < cutoff:
+                shutil.rmtree(entry, ignore_errors=True)
+                logger.info("Pruned expired run archive %s", entry.name)
+    except OSError as exc:
+        logger.warning("Run-archive pruning failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
