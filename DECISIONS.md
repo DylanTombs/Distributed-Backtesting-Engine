@@ -465,6 +465,30 @@ The 0.6 threshold is calibrated so that:
 
 ---
 
+### ADR-043: CORS extension-ID pinning via ALLOWED_EXTENSION_IDS (revisits ADR-035)
+
+**Decision:** The extension-origin CORS regex is built at startup from the `ALLOWED_EXTENSION_IDS` environment variable (comma-separated 32-char IDs, escaped and alternated into `chrome-extension://(id1|id2)`). When the variable is unset, the ADR-035 wildcard `chrome-extension://.*` remains. `X-API-Key` is added to `allow_headers` so authenticated requests pass preflight.
+
+**Rationale:** ADR-035 justified the wildcard with "the API binds to localhost only" — exactly the premise Phase 7's hosted deployment removes. On a public endpoint the wildcard grants CORS approval to any extension installed in any user's browser. Pinning to the published CWS ID closes that, while the unset-variable default preserves the dev workflow ADR-035 protected (sideloaded extension IDs churn on every clean profile). This is a premise change, not a relitigation: the localhost deployment keeps the wildcard behaviour.
+
+**Trade-offs:**
+- The published extension ID is only known after the first CWS upload, so the first hosted deploy runs unpinned; set the secret immediately after submission (documented in fly.toml).
+- Developers testing a sideloaded extension against the hosted API must add their local ID to the variable — intentional friction, since that is exactly the access being restricted.
+
+---
+
+### ADR-044: Per-run temp directories + bounded semaphore replace the ADR-027 global lock
+
+**Decision:** Each backtest invocation creates its own temporary directory, runs `ml_backtest` with that directory as CWD (all input paths passed absolute), reads and archives the outputs, and deletes the directory. The global `threading.Lock` is gone; a `BoundedSemaphore` (`MAX_CONCURRENT_BACKTESTS`, default 2) caps simultaneous binary processes. `run_id` gains a UUID suffix (`YYYYMMDD_HHMMSS_<8-hex>`). Binary invocations get a 90 s wall-clock timeout.
+
+**Rationale:** ADR-027 accepted serialisation as the cost of the binary's fixed output paths. On a hosted server that cost becomes a sequential queue for every user. The binary writes to its CWD, so pointing CWD at a per-run directory isolates outputs without touching C++ — resolving ADR-027 exactly as it anticipated. The audit's prerequisites land together: second-granularity `run_id`s would collide under concurrency and silently merge archive directories (P1-9), and unbounded process spawn would exhaust a shared-cpu-1x VM during warm-up plus live traffic (P1-10).
+
+**Trade-offs:**
+- The semaphore still queues requests beyond the cap — but the cap is now a tunable measure of VM capacity, not a structural bottleneck.
+- The P0-1 missing-output check is retained: an empty run directory after exit 0 raises rather than returning an empty result.
+
+---
+
 ### ADR-035: All API calls routed through service worker; null removed from CORS
 
 **Decision:** `popup.js` and `content.js` never call the FastAPI bridge directly. All network requests go through `background.js` (the Manifest V3 service worker) via `chrome.runtime.sendMessage`. Separately, `"null"` was removed from `_ALLOWED_ORIGINS` in `cors.py`; the regex `chrome-extension://.*` covers extension requests instead.
