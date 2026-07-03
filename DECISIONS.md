@@ -405,7 +405,65 @@ The 0.6 threshold is calibrated so that:
 
 ---
 
-## Chrome Extension
+### ADR-038: SSRF defence — resolve-and-deny non-global addresses, no redirects
+
+**Decision:** Every server-side fetch of a caller-supplied URL goes through a single validated helper in `scraper.py`: only `http`/`https` schemes are accepted, the hostname is resolved and *every* resolved address must be globally routable (loopback, RFC 1918, link-local, reserved, multicast, and unspecified ranges are all denied), and redirects are treated as failure rather than followed. `trafilatura` never fetches on its own — it only extracts from HTML the validated helper downloaded. A shallow scheme check also runs in the Pydantic schema so obviously bad URLs fail at the boundary with a clear 422.
+
+**Rationale:** On a hosted deployment, an unvalidated `url` field reaches cloud metadata endpoints (`169.254.169.254`), the API's own localhost port, and internal service addresses — and the extracted text is forwarded to the Anthropic API, forming an exfiltration oracle. Refusing redirects closes the open-redirect bypass (a public URL 302-ing to a private address). API-key auth (Phase 7.2) gates *who* can trigger requests, not what the server will fetch; the fetch itself must be safe.
+
+**Trade-offs:**
+- A residual TOCTOU window exists between DNS validation and the actual connect (DNS rebinding). Closing it requires pinning the resolved IP inside a custom HTTP transport; accepted as out of scope for now and documented in `scraper.py`.
+- Legitimate articles behind redirects (URL shorteners, tracking links) no longer resolve server-side; the extension's `raw_text` path is the designed fallback for those pages.
+
+---
+
+### ADR-039: Error taxonomy — BacktestInputError → 422, everything else → generic 500
+
+**Decision:** `runner.py` raises `BacktestInputError` (a `RuntimeError` subclass) for failures caused by the client's request — an empty date window, no market data for the requested tickers — with messages containing no filesystem paths or build instructions. `app.py` maps it to HTTP 422 with the message verbatim. Every other exception, including non-`RuntimeError` surprises (wrong-architecture binary → `OSError`, corrupt CSV → parser errors), maps to a generic 500; full detail is logged server-side only.
+
+**Rationale:** The previous `detail=str(exc)` forwarded absolute paths, binary stderr, and build commands to any client — information disclosure on what becomes a public endpoint in Phase 7 — and returned 500 for client-input problems, drowning hosted monitoring in false server-fault alerts. The 4xx/5xx split makes error-rate dashboards meaningful: 5xx means the server is broken, 4xx means the request was.
+
+**Trade-offs:**
+- Clients lose diagnostic detail on genuine server faults; operators must consult logs. Intentional — those details were never safe to expose.
+- The `Available data covers X – Y` range in the empty-window message intentionally remains: it is the one detail a client needs to correct the request, and it reveals only data coverage, not infrastructure.
+
+---
+
+### ADR-040: Archived run directories pruned after 7 days
+
+**Decision:** `runner.py` prunes subdirectories of `output/runs/` older than 7 days (`_RUNS_TTL_DAYS`) on each archive write. Pruning is best-effort: failures are logged, never raised into a live request.
+
+**Rationale:** Every cache-miss backtest persisted three CSVs forever, growing without bound on a hosted volume — and directly contradicting the Phase 7 privacy-policy claim ("request-level data only, 7-day TTL") that Chrome Web Store review checks. A TTL enforced in code makes the published policy true by construction rather than by manual cleanup.
+
+**Trade-offs:**
+- Archived tearsheets older than a week disappear on the next run; for local research work the dashboard's own run store (not `output/runs/`) remains the durable record.
+- Pruning on the write path adds one directory scan per uncached run — negligible against a multi-second binary invocation.
+
+---
+
+### ADR-041: Curated ticker hygiene — no non-tradable symbols; delisted symbols require a live proxy
+
+**Decision:** Currency codes (`GBP`) and person names (`MUSK`) are removed from the curated events database and entity allow-list; currency exposure is expressed through ETFs (`FXB` for the pound). Delisted symbols that are historically central to an event (`SIVB`, `ENE`, `WCOM`, `FRC`, `SBNY`, `PACW`) remain for accuracy, but every event containing one must also list at least one still-listed proxy so the ADR-028 fallback resolves to real data. Both rules are enforced by tests (`test_context_ticker_hygiene.py`) against a maintained denylist.
+
+**Rationale:** These symbols pass the `[A-Z0-9.\-]{1,7}` boundary regex and fail only at data-fetch time — the same defect class as the fixed WHT→XLE bug. With startup pre-warm and Web Store distribution, a failing curated ticker ships a broken Quick-Pick card to every user. Encoding the class in a test prevents recurrence as events are added.
+
+**Trade-offs:**
+- The denylist is curated, not provider-verified; a wrong symbol outside the known classes can still slip through. Live provider validation is deferred to a post-launch phase.
+- Removing `GBP` loses nothing: both affected events already carried `FXB`/`EWU` for the same exposure.
+
+---
+
+### ADR-042: LLM I/O hardening — delimited untrusted input, boundary-validated output, bounded spend
+
+**Decision:** The `_llm_pass` fallback (ADR-034) now: (1) wraps page text in `<article>` tags with an explicit system-prompt clause that tag contents are data, never instructions; (2) validates the model's reply with the same rules applied to client input — ticker regex, ISO-date parse, 120-char label cap, non-string coercion — with confidence credited only to fields that survive validation; (3) constructs the Anthropic client with a 20 s timeout and one retry, and skips the paid call entirely for texts under 40 characters. On merge, a curated `event_key` is never paired with a different event's label (the stale key is dropped), and a matched curated event's canonical date window always wins over LLM-proposed dates.
+
+**Rationale:** Page text is attacker-controlled once the extension runs on arbitrary sites: without delimiting, a malicious page steers the extraction result (up to the 0.80 LLM cap) into the popup UI and backtest parameters; without output validation, a non-string ticker in the reply 500s the endpoint. The SDK's default 10-minute timeout with 2 retries could pin a FastAPI threadpool worker for half an hour per hung call — a cheap denial-of-service against a small hosted VM, compounding the unmetered spend problem (fully addressed with rate limiting in Phase 7.2).
+
+**Trade-offs:**
+- Validated-only confidence means a reply with plausible but malformed dates scores lower than before; correct behaviour — unusable fields should not raise confidence.
+- The 40-char minimum skips the LLM for terse-but-legitimate snippets; the rule pass still serves those, and the threshold is a named constant.
+
+---
 
 ### ADR-035: All API calls routed through service worker; null removed from CORS
 
