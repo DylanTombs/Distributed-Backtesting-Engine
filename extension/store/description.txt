@@ -1,0 +1,39 @@
+SHORT DESCRIPTION (132 chars max)
+---------------------------------
+Run a transformer model backtest on any market event you read about. One
+click from any financial news page.
+
+LONG DESCRIPTION
+----------------
+TradingTransformer turns financial news into evidence. While you read about
+a market event — a crash, a rate decision, an earnings shock — one click
+runs a transformer-model trading strategy across that event's date window
+and shows you how it would have performed.
+
+HOW IT WORKS
+On any financial news page, click the candlestick button in the corner (or
+the toolbar icon). The extension reads the article, detects the market
+event, tickers, and date range — using a curated database of 40+ historical
+events with an AI fallback for anything it doesn't recognise — and runs a
+backtest on the server. Within seconds you get an equity curve, Sharpe
+ratio, maximum drawdown, total return, and win rate.
+
+SETUP
+Out of the box the extension talks to a hosted API (an API key is required
+— see the project page). Self-hosting is fully supported: run the open-
+source FastAPI server locally, point the extension at http://localhost:8502
+in Settings, and no key is needed.
+
+PRIVACY
+No analytics, no cookies, no tracking. The article text you backtest is
+processed per-request and never stored beyond a 7-day server-side result
+archive. Your API key and server URL are stored only in Chrome's own
+extension storage. Full privacy policy at the link below.
+
+OPEN SOURCE
+The entire stack — extension, API, transformer model, and the C++
+backtesting engine — is open source:
+https://github.com/DylanTombs/Distributed-Backtesting-Engine
+
+Backtests are hypothetical simulations for research and education. Nothing
+in this extension is investment advice.
