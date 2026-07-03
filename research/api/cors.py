@@ -2,10 +2,19 @@
 
 Allows requests only from the Chrome extension runtime and localhost origins.
 The extension's ``fetch()`` calls arrive from a ``chrome-extension://`` origin
-covered by ``_ALLOWED_ORIGIN_REGEX``.  The ``*`` wildcard is intentionally
-avoided — the API binds to localhost only in development.
+covered by the origin regex.  The ``*`` wildcard is intentionally avoided.
+
+Extension-ID pinning (ADR-043, revisits ADR-035's localhost-only premise):
+when ``ALLOWED_EXTENSION_IDS`` is set (comma-separated 32-char extension IDs),
+only those extensions pass CORS — required on a hosted deployment, where
+"any installed extension" is no longer shielded by a localhost-only bind.
+When unset (local development, where sideloaded extension IDs churn), any
+extension origin is accepted, matching ADR-035's original rationale.
 """
 from __future__ import annotations
+
+import os
+import re
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,7 +31,17 @@ _ALLOWED_ORIGINS = [
     # worker) which sends a chrome-extension:// origin, covered by the regex.
 ]
 
-_ALLOWED_ORIGIN_REGEX = r"chrome-extension://.*"
+
+def _build_origin_regex() -> str:
+    """Build the extension-origin regex, pinned to IDs when configured."""
+    raw = os.environ.get("ALLOWED_EXTENSION_IDS", "")
+    ids = [i.strip() for i in raw.split(",") if i.strip()]
+    if not ids:
+        return r"chrome-extension://.*"
+    return r"chrome-extension://(" + "|".join(re.escape(i) for i in ids) + r")"
+
+
+_ALLOWED_ORIGIN_REGEX = _build_origin_regex()
 
 
 def add_cors(app: FastAPI) -> None:
@@ -33,5 +52,7 @@ def add_cors(app: FastAPI) -> None:
         allow_origin_regex=_ALLOWED_ORIGIN_REGEX,
         allow_credentials=False,
         allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type", "Accept"],
+        # X-API-Key must be preflight-approved or the extension cannot
+        # authenticate to the hosted API (P1-2).
+        allow_headers=["Content-Type", "Accept", "X-API-Key"],
     )

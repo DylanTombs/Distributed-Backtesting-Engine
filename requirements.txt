@@ -22,3 +22,5 @@ httpx>=0.27
 trafilatura>=1.10
 dateparser>=1.2
 anthropic>=0.28
+# Phase 7 — hosted deployment
+slowapi>=0.1.9
