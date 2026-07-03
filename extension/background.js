@@ -15,6 +15,7 @@
 
 const DEFAULTS = {
   apiBase:       "http://localhost:8502",
+  apiKey:        "",
   dashboardBase: "http://localhost:8501",
 };
 
@@ -148,12 +149,13 @@ async function showBadgeFallback(tabId) {
 // ---------------------------------------------------------------------------
 
 async function fetchApi(path, options = {}) {
-  const { apiBase } = await getSettings();
+  const { apiBase, apiKey } = await getSettings();
   const url = `${apiBase}${path}`;
-  const resp = await fetch(url, {
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    ...options,
-  });
+  const headers = { "Content-Type": "application/json", Accept: "application/json" };
+  if (apiKey) {
+    headers["X-API-Key"] = apiKey;
+  }
+  const resp = await fetch(url, { headers, ...options });
 
   if (!resp.ok) {
     let detail = resp.statusText;
