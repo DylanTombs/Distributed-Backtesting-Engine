@@ -530,6 +530,30 @@ The 0.6 threshold is calibrated so that:
 
 ---
 
+### ADR-048: One shared indicator fixture pins both implementations; EMA divergence is asserted, not hidden
+
+**Decision:** Indicator math moved out of `RuleStrategy` into pure free functions (`backtester/include/strategy/Indicators.hpp`). A single checked-in fixture (`tests/fixtures/indicator_crossval.csv`, generated deterministically by `scripts/gen_indicator_fixture.py`) carries expected values for SMA, window-seeded EMA, Cutler RSI, and HIGH_N/LOW_N over a 60-bar series that includes a 15-bar forced rally (RSI loss==0 branch). The C++ suite asserts the `indicators::*` functions against it; the Python suite asserts `technicalIndicators.calculateSMA/calculateRsi` against the same file. The pipeline's stream-stateful EMA is intentionally NOT pinned to the engine's window-seeded EMA — a dedicated test asserts they *differ*, so silent convergence or accidental "fixes" surface as failures with a pointer to this ADR.
+
+**Rationale:** Phase 8 accepted two indicator implementations (engine strategy indicators vs. Python ML features) with a promise of drift protection. Pinning both to one artifact is stronger than pinning them to each other: when a formula changes, exactly one suite fails and names the divergent side, instead of a cross-comparison failing ambiguously. Regenerating the fixture is itself a reviewable event — any diff in the checked-in CSV means a formula changed.
+
+**Trade-offs:**
+- The fixture generator uses the same reference formulas the Python test recomputes — the artifact guards *drift*, not primordial correctness; the formulas themselves are simple enough to review by eye.
+- RSI comparison tolerance is 1e-3 because `technicalIndicators` adds a 1e-10 epsilon to avoid division by zero where the engine returns exactly 100.
+
+---
+
+### ADR-049: Short strategies via spec version 2; direction is version-gated and single-sourced
+
+**Decision:** The rule-spec format gains `version: 2` with an optional `direction: long|short` key. A `direction` line under `version: 1` is a parse error. `RuleStrategy` keeps one single-sided state machine — entry opens (LONG or SHORT signal by direction), exit closes (EXIT) — and `main.cpp` enables the portfolio's `allowShort` from the parsed spec, making the spec the single source of direction. On the Python side, `StrategyRules.direction` defaults to `"long"`; long strategies serialise to byte-identical version-1 spec files and omit direction from the canonical cache-hash form, so every pre-v2 saved strategy keeps its cache identity. Templates remain long-only. The extension exposes direction only in the custom rules builder.
+
+**Rationale:** The portfolio layer has had a complete, tested short path (margin rate, cover-on-EXIT, benchmark) since Phase 4 — Phase 8's long-only rules whitelist was a scoping decision, not a capability gap, and its ADR-046 reserved the `version` field for exactly this extension. Version-gating the new key means an old binary confronted with a v2 spec fails loudly at parse time rather than running a short strategy as long — the worst possible silent error in a backtesting tool. Wiring `allowShort` from the spec (rather than a separate config flag) removes the misconfiguration where a short strategy runs against a portfolio that rejects SHORT signals into silent HOLDs.
+
+**Trade-offs:**
+- One direction per strategy (no mixed long/short books) — matches the single-position state machine; mixed books are a rules-v3-scale change.
+- Templates stay long-only for now; a short user must use the custom builder. Deliberate: template names ("Buy & Hold") encode direction semantics that a toggle would muddle.
+
+---
+
 ## Chrome Extension
 
 ### ADR-035: All API calls routed through service worker; null removed from CORS
