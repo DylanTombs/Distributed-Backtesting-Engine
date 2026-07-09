@@ -154,6 +154,9 @@ function buildStrategyPayload(state) {
         exitRows.length > MAX_RULES_PER_SIDE) {
       return { ok: false, error: `At most ${MAX_RULES_PER_SIDE} rules per side` };
     }
+    if (state.direction != null && !["long", "short"].includes(state.direction)) {
+      return { ok: false, error: "Direction must be long or short" };
+    }
 
     const entry = [];
     for (const row of entryRows) {
@@ -169,6 +172,9 @@ function buildStrategyPayload(state) {
     }
 
     const strategy = { rules: { entry, exit } };
+    // Omit the default so pre-v2 saved strategies and long payloads stay
+    // byte-identical (stable server cache hashes, ADR-049).
+    if (state.direction === "short") strategy.rules.direction = "short";
     const name = (state.name ?? "").trim();
     if (name) strategy.name = name.slice(0, 64);
     return { ok: true, strategy };
