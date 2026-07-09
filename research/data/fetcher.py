@@ -26,7 +26,13 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-OHLCV_DIR = PROJECT_ROOT / "backtester" / "data" / "ohlcv"
+# OHLCV_CACHE_DIR points the cache at a persistent volume on hosted deploys
+# (Phase 9.3) — without it, fetched data dies with the container filesystem
+# on every redeploy and each ticker pays its network cost again.
+OHLCV_DIR = Path(
+    os.environ.get("OHLCV_CACHE_DIR")
+    or PROJECT_ROOT / "backtester" / "data" / "ohlcv"
+)
 LEGACY_DATA_DIR = PROJECT_ROOT / "backtester" / "data"   # pre-Phase-8 raw CSVs
 
 _STOOQ_URL = "https://stooq.com/q/d/l/?s={symbol}&i=d"
