@@ -412,3 +412,27 @@ exit 0
                 strategy=StrategySpec(template="ma_cross",
                                       params={"fast": 50, "slow": 10}),
             )
+
+    def test_short_rules_spec_reaches_binary_with_version_2(
+        self, env, monkeypatch, tmp_path
+    ):
+        marker_dir = tmp_path / "markers2"
+        marker_dir.mkdir()
+        monkeypatch.setenv("MARKER_DIR", str(marker_dir))
+        _write_binary(env, """#!/bin/sh
+cp "$3" "$MARKER_DIR/spec_seen.txt"
+printf 'timestamp,equity\\n2020-03-03,101000\\n' > ml_equity.csv
+printf 'timestamp,direction,profit\\n' > ml_trades.csv
+exit 0
+""")
+        from research.api.schemas import RuleCondition, StrategyRules
+
+        spec = StrategySpec(rules=StrategyRules(
+            direction="short",
+            entry=[RuleCondition(indicator="RSI", period=7, op=">", value=75)],
+        ), name="fade")
+        runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05", strategy=spec)
+
+        seen = (marker_dir / "spec_seen.txt").read_text()
+        assert seen.startswith("version: 2\n")
+        assert "direction: short" in seen

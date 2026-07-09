@@ -152,3 +152,62 @@ class TestCustomRules:
         b = resolve(StrategySpec(template="ma_cross",
                                  params={"slow": 20, "fast": 5}))
         assert a.hash == b.hash
+
+
+# ---------------------------------------------------------------------------
+# Spec v2: direction (Phase 9.2, ADR-049)
+# ---------------------------------------------------------------------------
+
+class TestDirection:
+    def _short_spec(self) -> StrategySpec:
+        return StrategySpec(rules=StrategyRules(
+            direction="short",
+            entry=[RuleCondition(indicator="RSI", period=7, op=">", value=75)],
+            exit=[RuleCondition(indicator="RSI", period=7, op="<", value=40)],
+        ), name="fade the rip")
+
+    def test_short_rules_emit_version_2_spec(self):
+        text = to_spec_file(resolve(self._short_spec()))
+        assert text.startswith("version: 2\n")
+        assert "direction: short" in text
+        assert "entry: RSI:7 > 75" in text
+
+    def test_long_rules_still_emit_version_1(self):
+        long_spec = StrategySpec(rules=StrategyRules(
+            entry=[RuleCondition(indicator="PRICE", op=">", value=0)],
+        ))
+        text = to_spec_file(resolve(long_spec))
+        assert text.startswith("version: 1\n")
+        assert "direction" not in text
+
+    def test_templates_remain_version_1(self):
+        for template in ("buy_hold", "ma_cross", "rsi_reversion", "breakout"):
+            text = to_spec_file(resolve(StrategySpec(template=template)))
+            assert text.startswith("version: 1\n"), template
+
+    def test_direction_changes_the_cache_hash(self):
+        short = resolve(self._short_spec())
+        long_twin = resolve(StrategySpec(rules=StrategyRules(
+            entry=[RuleCondition(indicator="RSI", period=7, op=">", value=75)],
+            exit=[RuleCondition(indicator="RSI", period=7, op="<", value=40)],
+        ), name="fade the rip"))
+        assert short.hash != long_twin.hash
+
+    def test_long_hash_unchanged_by_explicit_default(self):
+        """Pre-v2 saved strategies (no direction field) must hit the same
+        cache entries as ones that now send direction='long' explicitly."""
+        implicit = resolve(StrategySpec(rules=StrategyRules(
+            entry=[RuleCondition(indicator="PRICE", op=">", value=0)],
+        )))
+        explicit = resolve(StrategySpec(rules=StrategyRules(
+            direction="long",
+            entry=[RuleCondition(indicator="PRICE", op=">", value=0)],
+        )))
+        assert implicit.hash == explicit.hash
+
+    def test_invalid_direction_rejected_at_boundary(self):
+        with pytest.raises(ValidationError):
+            StrategyRules(
+                direction="sideways",
+                entry=[RuleCondition(indicator="PRICE", op=">", value=0)],
+            )

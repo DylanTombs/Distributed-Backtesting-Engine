@@ -148,6 +148,10 @@ def resolve(spec: Optional[StrategySpec]) -> ResolvedStrategy:
         rules = spec.rules
         name = spec.name or "custom"
         canonical = {"rules": rules.model_dump(exclude_none=True)}
+        # Keep pre-v2 cache hashes stable: "long" is the default and is
+        # omitted from the canonical form (ADR-049).
+        if rules.direction == "long":
+            canonical["rules"].pop("direction", None)
 
     return ResolvedStrategy(name=name, rules=rules, canonical=canonical)
 
@@ -166,10 +170,17 @@ def _condition_line(cond: RuleCondition) -> str:
 
 
 def to_spec_file(resolved: ResolvedStrategy) -> str:
-    """Serialise to the flat line format RuleSpec::loadFromFile parses."""
+    """Serialise to the flat line format RuleSpec::loadFromFile parses.
+
+    Long strategies emit version 1 so their spec files (and cache hashes)
+    stay byte-identical to Phase 8; only short strategies need v2 (ADR-049).
+    """
     if resolved.rules is None:
         raise StrategyError("ml_transformer has no rule spec file")
-    lines = ["version: 1", f"name: {resolved.name}"]
+    is_short = resolved.rules.direction == "short"
+    lines = [f"version: {2 if is_short else 1}", f"name: {resolved.name}"]
+    if is_short:
+        lines.append("direction: short")
     lines += [f"entry: {_condition_line(c)}" for c in resolved.rules.entry]
     lines += [f"exit: {_condition_line(c)}" for c in resolved.rules.exit]
     return "\n".join(lines) + "\n"
