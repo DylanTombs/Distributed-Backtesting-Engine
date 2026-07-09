@@ -195,3 +195,62 @@ TEST(RuleStrategyTest, NoSignalsBeforeWarmup) {
     RuleStrategy strat{RuleSpec::loadFromFile(path)};
     EXPECT_TRUE(runSeries(strat, {10, 10, 10, 10}).empty());  // 4 < warmup 5
 }
+
+// ---------------------------------------------------------------------------
+// Version 2: direction (Phase 9.2, ADR-049)
+// ---------------------------------------------------------------------------
+
+TEST(RuleSpecTest, ParsesShortDirectionUnderVersion2) {
+    const auto path = writeSpec(
+        "version: 2\n"
+        "direction: short\n"
+        "entry: RSI:3 > 70\n"
+        "exit: RSI:3 < 30\n");
+    const RuleSpec spec = RuleSpec::loadFromFile(path);
+    EXPECT_EQ(spec.direction, RuleDirection::SHORT);
+}
+
+TEST(RuleSpecTest, DirectionDefaultsToLong) {
+    const auto v1 = RuleSpec::loadFromFile(writeSpec(
+        "version: 1\nentry: PRICE > 0\n"));
+    EXPECT_EQ(v1.direction, RuleDirection::LONG);
+
+    const auto v2 = RuleSpec::loadFromFile(writeSpec(
+        "version: 2\nentry: PRICE > 0\n"));
+    EXPECT_EQ(v2.direction, RuleDirection::LONG);
+}
+
+TEST(RuleSpecTest, RejectsDirectionUnderVersion1) {
+    EXPECT_THROW(RuleSpec::loadFromFile(writeSpec(
+        "version: 1\ndirection: short\nentry: PRICE > 0\n")),
+        std::invalid_argument);
+}
+
+TEST(RuleSpecTest, RejectsUnknownDirection) {
+    EXPECT_THROW(RuleSpec::loadFromFile(writeSpec(
+        "version: 2\ndirection: sideways\nentry: PRICE > 0\n")),
+        std::invalid_argument);
+}
+
+TEST(RuleStrategyTest, ShortDirectionEmitsShortThenExit) {
+    // Overbought entry (rising series), oversold exit (falling series).
+    const auto path = writeSpec(
+        "version: 2\n"
+        "direction: short\n"
+        "entry: RSI:3 > 70\n"
+        "exit: RSI:3 < 30\n");
+    RuleStrategy strat{RuleSpec::loadFromFile(path)};
+    const auto signals =
+        runSeries(strat, {50, 52, 54, 56, 58, 40, 30, 20, 10});
+    ASSERT_EQ(signals.size(), 2u);
+    EXPECT_EQ(signals[0], SignalType::SHORT);
+    EXPECT_EQ(signals[1], SignalType::EXIT);
+}
+
+TEST(RuleStrategyTest, LongSpecStillEmitsLongUnderVersion2) {
+    const auto path = writeSpec("version: 2\nentry: PRICE > 0\n");
+    RuleStrategy strat{RuleSpec::loadFromFile(path)};
+    const auto signals = runSeries(strat, {10, 11, 12});
+    ASSERT_EQ(signals.size(), 1u);
+    EXPECT_EQ(signals[0], SignalType::LONG);
+}
