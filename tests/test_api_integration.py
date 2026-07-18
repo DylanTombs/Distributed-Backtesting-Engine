@@ -262,3 +262,18 @@ class TestBacktestHappyPath:
             resp = _client().post("/api/context", json={"raw_text": "x" * 100})
         assert resp.status_code == 500
         assert "boom" not in resp.json()["detail"]
+
+
+class TestWarmupGate:
+    """Cloud Run scale-to-zero: warm-up must be skippable via env (10.1)."""
+
+    def test_warmup_enabled_by_default(self, monkeypatch):
+        from research.api.app import warmup_enabled
+        monkeypatch.delenv("CACHE_WARMUP_DISABLED", raising=False)
+        assert warmup_enabled() is True
+
+    def test_warmup_disabled_via_env(self, monkeypatch):
+        from research.api.app import warmup_enabled
+        for value in ("1", "true", "yes"):
+            monkeypatch.setenv("CACHE_WARMUP_DISABLED", value)
+            assert warmup_enabled() is False

@@ -14,6 +14,7 @@ wrapper cannot resolve postponed (string) annotations for the request
 models, which breaks FastAPI's schema generation.
 """
 import logging
+import os
 import threading
 from contextlib import asynccontextmanager
 
@@ -39,10 +40,19 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 logger = logging.getLogger(__name__)
 
 
+def warmup_enabled() -> bool:
+    """Cache pre-warm is skipped on scale-to-zero hosts (Cloud Run throttles
+    background CPU, and re-warming every cold instance wastes fetches)."""
+    return os.environ.get("CACHE_WARMUP_DISABLED", "") not in ("1", "true", "yes")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
-    t = threading.Thread(target=warmup_cache, daemon=True, name="cache-warmup")
-    t.start()
+    if warmup_enabled():
+        t = threading.Thread(target=warmup_cache, daemon=True, name="cache-warmup")
+        t.start()
+    else:
+        logger.info("Cache warm-up disabled via CACHE_WARMUP_DISABLED")
     yield
 
 

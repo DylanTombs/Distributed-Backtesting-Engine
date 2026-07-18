@@ -552,6 +552,17 @@ The 0.6 threshold is calibrated so that:
 - One direction per strategy (no mixed long/short books) — matches the single-position state machine; mixed books are a rules-v3-scale change.
 - Templates stay long-only for now; a short user must use the custom builder. Deliberate: template names ("Buy & Hold") encode direction semantics that a toggle would muddle.
 
+
+### ADR-050: Hosting moved from Fly.io to Google Cloud Run free tier
+
+**Decision:** The hosted API deploys to Google Cloud Run (`scripts/deploy_cloudrun.sh`, root `Dockerfile`) instead of Fly.io. Cloud Build compiles the C++ `backtest` binary inside the image (multi-stage, both stages debian bookworm for one glibc), eliminating the local-Docker prerequisite and the stale/wrong-arch-binary risk that `deploy_api.sh` mitigated by convention. Scale-to-zero with `min-instances 0`, 512Mi, max 2 instances; OHLCV cache at `/tmp/ohlcv` (ephemeral per instance); `CACHE_WARMUP_DISABLED=1` skips the 41-event pre-warm. The Fly scaffolding (`fly.toml`, `Dockerfile.api`, `deploy_api.sh`) remains as a documented alternative for always-warm hosting.
+
+**Rationale:** Expected traffic is light; the user chose genuinely-free over always-warm. Cloud Run's permanent free tier (2M requests/month, Tier-1 region CPU/memory allowances) covers this workload at $0, where Fly's post-2024 pay-as-you-go pricing runs ~$3–7/month for the warm machine the 5s cold-start SLA required. Consequences accepted: first request after idle takes ~5–10s (machine + uvicorn boot), and the fetched-data cache is per-instance and ephemeral — one Stooq call per ticker per cold instance, bounded and cheap. Warm-up is disabled because Cloud Run throttles background CPU outside requests and re-warming every cold instance multiplies fetches for no persistent benefit.
+
+**Trade-offs:**
+- The PHASE_7 "health within 5 s of cold start" criterion is consciously relaxed to ~10 s on the free tier; revisit `min-instances 1` (paid) if usage justifies it.
+- No persistent volume: acceptable now; Cloud Storage-backed cache is the upgrade path if Stooq re-fetching ever matters.
+
 ---
 
 ## Chrome Extension

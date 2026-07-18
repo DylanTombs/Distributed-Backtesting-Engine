@@ -1,0 +1,35 @@
+# Upload only what the Cloud Run image build needs (Dockerfile at repo root).
+# Everything else stays local — keeps `gcloud run deploy --source .` uploads
+# small and fast.
+.git/
+.github/
+.claude/
+build/
+backtester/build/
+backtester/_deps/
+backtester/CMakeFiles/
+backtester/bin/
+backtester/lib/
+backtester/ml_backtest
+backtester/backtest
+checkpoints/
+data/
+models/
+output/
+docs/
+extension/
+tests/
+features/
+BacktestingData/
+__pycache__/
+*.pyc
+*.zip
+*.log
+.coverage
+.DS_Store
+PHASE_*.md
+DECISIONS.md
+ARCHITECTURE.md
+LEARN.md
+PDR.md
+README.md
