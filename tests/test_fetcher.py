@@ -117,3 +117,22 @@ class TestCsvValidation:
     def test_empty_body_rejected(self):
         assert fetcher._validate_csv("") is None
         assert fetcher._validate_csv("Date,Open,High,Low,Close,Volume\n") is None
+
+
+class TestCacheDirOverride:
+    def test_ohlcv_cache_dir_env_is_honoured(self, monkeypatch, tmp_path):
+        """OHLCV_CACHE_DIR points the cache at a persistent volume (9.3)."""
+        import importlib
+
+        monkeypatch.setenv("OHLCV_CACHE_DIR", str(tmp_path / "volume" / "ohlcv"))
+        importlib.reload(fetcher)
+        try:
+            assert fetcher.OHLCV_DIR == tmp_path / "volume" / "ohlcv"
+        finally:
+            monkeypatch.delenv("OHLCV_CACHE_DIR")
+            importlib.reload(fetcher)
+
+    def test_default_cache_dir_without_env(self):
+        assert fetcher.OHLCV_DIR == (
+            fetcher.PROJECT_ROOT / "backtester" / "data" / "ohlcv"
+        )

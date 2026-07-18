@@ -31,6 +31,9 @@ primary_region = "lhr"
 [env]
   PROJECT_ROOT = "/app"
   MAX_CONCURRENT_BACKTESTS = "2"
+  # OHLCV cache on the persistent volume (Fly allows one volume per machine,
+  # so it shares model_artefacts) — fetched tickers survive redeploys (9.3)
+  OHLCV_CACHE_DIR = "/app/models/ohlcv"
   # Secrets (set via `flyctl secrets set`, never here):
   #   API_KEYS               — comma-separated client keys
   #   ANTHROPIC_API_KEY      — context-extraction LLM fallback

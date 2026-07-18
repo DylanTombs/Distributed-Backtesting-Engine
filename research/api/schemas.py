@@ -100,6 +100,9 @@ class StrategyRules(BaseModel):
                                        max_length=MAX_CONDITIONS_PER_SIDE)
     exit: list[RuleCondition] = Field(default_factory=list,
                                       max_length=MAX_CONDITIONS_PER_SIDE)
+    # Spec v2 (Phase 9.2, ADR-049): entry conditions open a short position
+    # instead of a long one; exit covers. Long-only remains the default.
+    direction: Literal["long", "short"] = "long"
 
 
 class StrategySpec(BaseModel):

@@ -39,6 +39,7 @@ const btnAddExit      = document.getElementById("btn-add-exit");
 const strategyNameEl  = document.getElementById("strategy-name");
 const btnSaveStrategy = document.getElementById("btn-save-strategy");
 const strategyHint    = document.getElementById("strategy-hint");
+const ruleDirection   = document.getElementById("rule-direction");
 const resultStrategy  = document.getElementById("result-strategy");
 
 // ---------------------------------------------------------------------------
@@ -650,6 +651,7 @@ function currentStrategyPayload() {
   if (v === "custom") {
     return buildStrategyPayload({
       kind: "custom",
+      direction: ruleDirection.value,
       entryRows: readRuleRows(entryRulesEl),
       exitRows: readRuleRows(exitRulesEl),
       name: strategyNameEl.value,
@@ -709,5 +711,6 @@ function describeStrategy(strategy) {
     if (strategy.template === "ml_transformer") return ML_TEMPLATE.label;
     return strategy.template;
   }
-  return strategy.name || "Custom rules";
+  const base = strategy.name || "Custom rules";
+  return strategy.rules?.direction === "short" ? `${base} (short)` : base;
 }

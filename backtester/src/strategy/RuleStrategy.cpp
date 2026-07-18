@@ -1,9 +1,9 @@
 #include "../../include/strategy/RuleStrategy.hpp"
+#include "../../include/strategy/Indicators.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <fstream>
-#include <numeric>
 #include <sstream>
 #include <stdexcept>
 
@@ -149,10 +149,19 @@ RuleSpec RuleSpec::loadFromFile(const std::string& path) {
 
         if (key == "version") {
             spec.version = std::stoi(value);
-            if (spec.version != 1) fail("unsupported spec version " + value);
+            if (spec.version != 1 && spec.version != 2)
+                fail("unsupported spec version " + value);
             sawVersion = true;
         } else if (key == "name") {
             spec.name = value.substr(0, 64);
+        } else if (key == "direction") {
+            // Version-gated so a v1-only consumer can never mis-run a short
+            // spec as long (ADR-049).
+            if (spec.version != 2)
+                fail("'direction' requires version: 2 (declared before it)");
+            if (value == "long")       spec.direction = RuleDirection::LONG;
+            else if (value == "short") spec.direction = RuleDirection::SHORT;
+            else fail("direction must be 'long' or 'short', got '" + value + "'");
         } else if (key == "entry") {
             spec.entry.push_back(parseCondition(value));
         } else if (key == "exit") {
@@ -190,52 +199,13 @@ RuleStrategy::RuleStrategy(RuleSpec spec)
     : spec_(std::move(spec)), warmup_(spec_.warmupBars()) {}
 
 double RuleStrategy::indicatorValue(const RuleOperand& op) const {
-    const auto n = closes_.size();
     switch (op.indicator) {
-        case RuleIndicator::PRICE:
-            return closes_.back();
-
-        case RuleIndicator::SMA: {
-            double sum = std::accumulate(closes_.end() - op.period,
-                                         closes_.end(), 0.0);
-            return sum / op.period;
-        }
-
-        case RuleIndicator::EMA: {
-            // Seed with the SMA of the first `period` bars in the window,
-            // then apply the standard recursion over the rest. Deterministic
-            // from the rolling window — no hidden state.
-            const double k = 2.0 / (op.period + 1);
-            double ema = std::accumulate(closes_.begin(),
-                                         closes_.begin() + op.period, 0.0) /
-                         op.period;
-            for (std::size_t i = op.period; i < n; ++i)
-                ema = closes_[i] * k + ema * (1.0 - k);
-            return ema;
-        }
-
-        case RuleIndicator::RSI: {
-            // Cutler's RSI: simple average of gains/losses over the last
-            // `period` diffs. Deterministic from the window.
-            double gain = 0.0, loss = 0.0;
-            for (std::size_t i = n - op.period; i < n; ++i) {
-                const double d = closes_[i] - closes_[i - 1];
-                if (d > 0) gain += d; else loss -= d;
-            }
-            if (loss == 0.0) return 100.0;
-            const double rs = gain / loss;
-            return 100.0 - 100.0 / (1.0 + rs);
-        }
-
-        case RuleIndicator::HIGH_N:
-            // Highest close of the `period` bars BEFORE the current bar —
-            // so `PRICE > HIGH_N:20` is a genuine breakout condition.
-            return *std::max_element(closes_.end() - op.period - 1,
-                                     closes_.end() - 1);
-
-        case RuleIndicator::LOW_N:
-            return *std::min_element(closes_.end() - op.period - 1,
-                                     closes_.end() - 1);
+        case RuleIndicator::PRICE:  return closes_.back();
+        case RuleIndicator::SMA:    return indicators::sma(closes_, op.period);
+        case RuleIndicator::EMA:    return indicators::emaSeeded(closes_, op.period);
+        case RuleIndicator::RSI:    return indicators::rsi(closes_, op.period);
+        case RuleIndicator::HIGH_N: return indicators::highestBefore(closes_, op.period);
+        case RuleIndicator::LOW_N:  return indicators::lowestBefore(closes_, op.period);
     }
     return closes_.back();
 }
@@ -293,9 +263,12 @@ void RuleStrategy::onMarketEvent(const MarketEvent& event, EventQueue& queue) {
 
     const auto current = computeAll();
 
+    const SignalType entrySignal = (spec_.direction == RuleDirection::SHORT)
+        ? SignalType::SHORT : SignalType::LONG;
+
     if (!inPosition_ && conditionsMet(spec_.entry, current)) {
         inPosition_ = true;
-        queue.push(std::make_shared<SignalEvent>(event.symbol, SignalType::LONG));
+        queue.push(std::make_shared<SignalEvent>(event.symbol, entrySignal));
     } else if (inPosition_ && !spec_.exit.empty() &&
                conditionsMet(spec_.exit, current)) {
         inPosition_ = false;

@@ -131,8 +131,13 @@ services:
       - "8080:8080"
     volumes:
       - ./models:/app/models:ro
+      - ohlcv_cache:/app/ohlcv          # durable fetched-data cache (9.3)
     environment:
       - API_KEYS=${API_KEYS:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - ALLOWED_EXTENSION_IDS=${ALLOWED_EXTENSION_IDS:-}
       - MAX_CONCURRENT_BACKTESTS=2
+      - OHLCV_CACHE_DIR=/app/ohlcv
+
+volumes:
+  ohlcv_cache:

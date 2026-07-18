@@ -131,8 +131,9 @@ Run at: immediately after the user signs off on an audit report.
 
 ## Current State
 
-Active branch: `feat/phase-8-custom-strategies` (stacked on `feat/phase-7-hosted-deployment`)  
-Active phase: `PHASE_8.md` — on-the-fly backtesting: real tickers, custom strategies  
+Active branch: `feat/phase-9-strategy-v2` (stacked on phase-8 → phase-7; PRs #21/#22 open)  
+Active phase: `PHASE_9.md` — strategy engine v2: indicator cross-validation, short direction, durable OHLCV cache  
+Phase 8: code complete (rule engine, on-demand OHLCV, strategy API/UI, torch-free image)  
 Phase 7: code complete (settings/auth/rate limiting/per-run dirs/deploy scaffolding); 7.6 CWS submission pending  
 Phase 6: complete (browser extension + post-audit hardening)  
 Phases 1–5: complete, do not modify their phase files  

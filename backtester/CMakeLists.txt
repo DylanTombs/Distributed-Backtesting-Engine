@@ -67,6 +67,10 @@ if(BUILD_TESTING)
     # so all LibTorch code is compiled out — tests run without LibTorch.
     add_executable(backtester_tests ${TEST_SOURCES} ${SOURCES})
     target_include_directories(backtester_tests PRIVATE include)
+    # Shared cross-validation fixtures (Phase 9.1) live at the repo root so
+    # the Python suite pins against the same files.
+    target_compile_definitions(backtester_tests PRIVATE
+        FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures")
     target_link_libraries(backtester_tests GTest::gtest_main spdlog::spdlog_header_only)
 
     include(GoogleTest)

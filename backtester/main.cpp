@@ -35,12 +35,19 @@ int main(int argc, char* argv[]) {
 
     try {
         const RuleSpec spec = RuleSpec::loadFromFile(specPath);
+        const bool isShort = spec.direction == RuleDirection::SHORT;
         std::cout << "Strategy: " << (spec.name.empty() ? "unnamed" : spec.name)
+                  << (isShort ? "  [short]" : "")
                   << "  (warmup " << spec.warmupBars() << " bars)\n";
 
         RuleStrategy strategy(spec);
         CSVDataHandler data(csvPath, symbol);
-        BacktestEngine engine(strategy, data);
+
+        BacktestConfig config;
+        // Short specs need the portfolio's short path enabled; the spec is
+        // the single source of direction so the two can't disagree (ADR-049).
+        config.allowShort = isShort;
+        BacktestEngine engine(strategy, data, config);
 
         engine.run();
 

@@ -167,3 +167,34 @@ test("template metadata stays within server bounds", () => {
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// Spec v2: direction (Phase 9.2)
+// ---------------------------------------------------------------------------
+
+test("short custom payload includes rules.direction", () => {
+  const r = buildStrategyPayload({
+    kind: "custom", direction: "short",
+    entryRows: [RSI_ROW], exitRows: [],
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.strategy.rules.direction, "short");
+});
+
+test("long custom payload omits direction for stable cache hashes", () => {
+  for (const direction of ["long", undefined]) {
+    const r = buildStrategyPayload({
+      kind: "custom", direction, entryRows: [RSI_ROW], exitRows: [],
+    });
+    assert.equal(r.ok, true);
+    assert.ok(!("direction" in r.strategy.rules));
+  }
+});
+
+test("invalid direction is rejected", () => {
+  const r = buildStrategyPayload({
+    kind: "custom", direction: "sideways",
+    entryRows: [RSI_ROW], exitRows: [],
+  });
+  assert.equal(r.ok, false);
+});
