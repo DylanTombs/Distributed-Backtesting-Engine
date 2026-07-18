@@ -180,12 +180,15 @@ def extract_context(request: Request, req: ContextRequest) -> ContextResponse:
 )
 @limiter.limit(BACKTEST_LIMIT)
 def trigger_backtest(request: Request, req: BacktestRequest) -> BacktestResponse:
-    if not is_model_loaded():
+    # The model gate applies only to the experimental ML strategy — the
+    # transparent rule strategies need no model artefact (Phase 8, ADR-047).
+    wants_ml = req.strategy is not None and req.strategy.template == "ml_transformer"
+    if wants_ml and not is_model_loaded():
         raise HTTPException(
             status_code=400,
             detail=(
-                "No trained model found. Run the pipeline first: "
-                "python run_pipeline.py"
+                "The experimental ML strategy is not available on this "
+                "server (no trained model deployed)."
             ),
         )
 
@@ -198,6 +201,7 @@ def trigger_backtest(request: Request, req: BacktestRequest) -> BacktestResponse
             tickers=req.tickers,
             date_start=req.date_start,
             date_end=req.date_end,
+            strategy=req.strategy,
         )
     except BacktestInputError as exc:
         logger.info("Backtest rejected: %s", exc)

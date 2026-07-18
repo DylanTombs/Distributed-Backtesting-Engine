@@ -24,6 +24,11 @@
 
     <div class="section-label mt">Tickers</div>
     <div id="ticker-chips" class="chips"></div>
+    <div class="row">
+      <input type="text" id="ticker-input" class="date-input" maxlength="7"
+             placeholder="Add ticker (e.g. NVDA)" autocomplete="off">
+      <button id="btn-add-ticker" class="btn-icon" title="Add ticker">+</button>
+    </div>
 
     <div class="section-label mt">Date window</div>
     <div class="row">
@@ -38,6 +43,36 @@
     <div class="confidence-label" id="confidence-label">Detecting…</div>
   </section>
 
+  <!-- Strategy panel -->
+  <section class="panel" id="panel-strategy">
+    <div class="section-label">Strategy</div>
+    <div class="row">
+      <select id="strategy-select" class="select-event"></select>
+      <button id="btn-delete-saved" class="btn-icon" style="display:none"
+              title="Delete saved strategy">✕</button>
+    </div>
+
+    <div id="strategy-params" class="param-grid"></div>
+
+    <div id="rules-builder" style="display:none">
+      <div class="section-label mt">Entry rules
+        <button id="btn-add-entry" class="btn-icon btn-mini" title="Add entry rule">+</button>
+      </div>
+      <div id="entry-rules"></div>
+      <div class="section-label mt">Exit rules
+        <button id="btn-add-exit" class="btn-icon btn-mini" title="Add exit rule">+</button>
+      </div>
+      <div id="exit-rules"></div>
+      <div class="row mt">
+        <input type="text" id="strategy-name" class="date-input" maxlength="64"
+               placeholder="Name to save (optional)" autocomplete="off">
+        <button id="btn-save-strategy" class="btn-icon" title="Save strategy">💾</button>
+      </div>
+    </div>
+
+    <div id="strategy-hint" class="strategy-hint"></div>
+  </section>
+
   <!-- Run button -->
   <section class="panel panel-run">
     <button id="btn-run" class="btn-primary" disabled>▶ Run Backtest</button>
@@ -45,6 +80,7 @@
 
   <!-- Results panel (hidden until backtest completes) -->
   <section class="panel" id="panel-results" style="display:none">
+    <div id="result-strategy" class="result-strategy"></div>
     <div class="section-label">Equity curve</div>
     <canvas id="equity-chart" height="140"></canvas>
 
@@ -58,6 +94,7 @@
   <!-- Error / info message -->
   <div id="msg-box" class="msg-box" style="display:none"></div>
 
+  <script src="strategy.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

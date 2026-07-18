@@ -1,7 +1,16 @@
 # Phase 8 — On-the-Fly Backtesting: Real Tickers, Custom Strategies
 
-**Status:** Planning
+**Status:** In progress — 8.1–8.6 core implemented; deploy verification and follow-ups pending
 **Prerequisites:** Phase 7 code complete (7.6 submission may proceed in parallel)
+
+| Task | State | Notes |
+|------|-------|-------|
+| 8.1 On-demand OHLCV ingestion | ✅ Done | Stooq keyless CSV (ADR-045), cache-forever + daily re-fetch guard, `DATA_FETCH_DISABLED` kill switch, network-proof tests |
+| 8.2 Strategy schema & rule engine | ✅ Done | C++ `RuleStrategy` (15 unit tests, suite 152/152), flat spec handoff (ADR-046); C++/Python indicator cross-validation fixture is follow-up |
+| 8.3 Strategy-aware API | ✅ Done | `strategy` field (templates + custom rules), strategy-hashed cache keys, honest 422 (ADR-047), ML path experimental-flagged, model gate ML-only |
+| 8.4 Extension builder UI | ✅ Done | Template picker + params, custom rule rows, saved strategies in `storage.sync`, user ticker input, experimental divider; 34 Node tests |
+| 8.5 Speed budgets | ✅ Done | `pytest -m timing`: full-history engine run ≪ budget; runner overhead bounded. End-to-end cold-fetch budget verified at deploy time |
+| 8.6 Transformer containment | ✅ Done | Torch-free `requirements-api.txt` + `Dockerfile.api` ships `backtest` only; `CMAKE_TARGET` build arg; ML scoreboard/experiments remain backlog |
 **Ambition level:** High — turns the extension from a demo of one model into a
 general-purpose "backtest what you're reading" tool
 

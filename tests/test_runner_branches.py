@@ -15,10 +15,15 @@ from types import SimpleNamespace
 import pytest
 
 import research.api.runner as runner
+from research.api.schemas import StrategySpec
+from research.data import fetcher
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+# Route explicitly through the experimental ML path (feature CSVs + ml binary)
+_ML = StrategySpec(template="ml_transformer")
 
 _FEATURE_CSV = (
     "timestamp,close\n"
@@ -26,6 +31,14 @@ _FEATURE_CSV = (
     "2020-03-03,101.0\n"
     "2020-03-04,102.0\n"
     "2020-03-05,103.0\n"
+)
+
+_OHLCV_CSV = (
+    "date,open,high,low,close,volume\n"
+    "2020-03-02,99.0,101.0,98.0,100.0,1000\n"
+    "2020-03-03,100.0,102.0,99.0,101.0,1000\n"
+    "2020-03-04,101.0,103.0,100.0,102.0,1000\n"
+    "2020-03-05,102.0,104.0,101.0,103.0,1000\n"
 )
 
 _GOOD_BINARY = """#!/bin/sh
@@ -53,14 +66,18 @@ def env(tmp_path, monkeypatch):
     binary.write_text(_GOOD_BINARY)
     binary.chmod(0o755)
 
-    (data / "AAPL_features.csv").write_text(_FEATURE_CSV)
+    (data / "AAPL_features.csv").write_text(_FEATURE_CSV)   # ML path input
+    (data / "AAPL.csv").write_text(_OHLCV_CSV)              # rules path input
 
     monkeypatch.setattr(runner, "PROJECT_ROOT", project)
     monkeypatch.setattr(runner, "DATA_DIR", data)
     monkeypatch.setattr(runner, "OUTPUT_DIR", output)
     monkeypatch.setattr(runner, "MODEL_DIR", tmp_path / "models")
     monkeypatch.setattr(runner, "BINARY", binary)
+    monkeypatch.setattr(runner, "RULES_BINARY", binary)   # same fake for both
     monkeypatch.setattr(runner, "_cache", runner._LRUCache(runner._LRU_MAX))
+    monkeypatch.setattr(fetcher, "OHLCV_DIR", tmp_path / "ohlcv")
+    monkeypatch.setattr(fetcher, "LEGACY_DATA_DIR", data)
 
     return SimpleNamespace(
         project=project, data=data, output=output, binary=binary
@@ -118,7 +135,8 @@ class TestErrorTaxonomy:
     def test_no_feature_csvs_message_contains_no_paths(self, env, tmp_path):
         (env.data / "AAPL_features.csv").unlink()
         with pytest.raises(runner.BacktestInputError) as exc_info:
-            runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05")
+            runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05",
+                                strategy=_ML)
         assert str(tmp_path) not in str(exc_info.value)
         assert "pipeline" not in str(exc_info.value)
 
@@ -133,7 +151,7 @@ class TestWarmupLogging:
     ):
         import logging
 
-        monkeypatch.setattr(runner, "BINARY", env.project / "does_not_exist")
+        monkeypatch.setattr(runner, "RULES_BINARY", env.project / "does_not_exist")
         with caplog.at_level(logging.WARNING, logger="research.api.runner"):
             runner.warmup_cache()
         assert "skipping pre-warm" in caplog.text
@@ -180,13 +198,15 @@ class TestRunArchivePruning:
 
 class TestSymbolFallback:
     def test_unknown_ticker_falls_back_with_warning(self, env):
-        result = runner.run_backtest(["ZZZZ"], "2020-03-02", "2020-03-05")
+        result = runner.run_backtest(["ZZZZ"], "2020-03-02", "2020-03-05",
+                                     strategy=_ML)
         assert result.warning is not None
         assert "ZZZZ" in result.warning
         assert "AAPL" in result.warning
 
     def test_exact_match_has_no_warning(self, env):
-        result = runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05")
+        result = runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05",
+                                     strategy=_ML)
         assert result.warning is None
 
 
@@ -208,7 +228,7 @@ class TestCacheHit:
 
     def test_ticker_order_hits_same_cache_entry(self, env):
         """ADR-037: cache key sorts tickers."""
-        (env.data / "MSFT_features.csv").write_text(_FEATURE_CSV)
+        (env.data / "MSFT.csv").write_text(_OHLCV_CSV)
         first = runner.run_backtest(["MSFT", "AAPL"], "2020-03-02", "2020-03-05")
         second = runner.run_backtest(["AAPL", "MSFT"], "2020-03-02", "2020-03-05")
         assert first.cached is False
@@ -265,7 +285,7 @@ class TestPerRunIsolation:
         """Two overlapping runs each get their own symbol's results."""
         import threading
 
-        (env.data / "MSFT_features.csv").write_text(_FEATURE_CSV)
+        (env.data / "MSFT.csv").write_text(_OHLCV_CSV)
         _write_binary(env, _PER_SYMBOL_BINARY)
 
         results: dict[str, object] = {}
@@ -306,7 +326,7 @@ class TestPerRunIsolation:
         monkeypatch.setenv("MARKER_DIR", str(marker_dir))
         monkeypatch.setattr(runner, "_run_slots", threading.BoundedSemaphore(1))
 
-        (env.data / "MSFT_features.csv").write_text(_FEATURE_CSV)
+        (env.data / "MSFT.csv").write_text(_OHLCV_CSV)
         _write_binary(env, """#!/bin/sh
 if [ -f "$MARKER_DIR/running" ]; then touch "$MARKER_DIR/overlap"; fi
 touch "$MARKER_DIR/running"
@@ -329,3 +349,66 @@ exit 0
             t.join(timeout=30)
 
         assert not (marker_dir / "overlap").exists()
+
+
+# ---------------------------------------------------------------------------
+# Phase 8: transparent rules path — spec handoff, echo fields, honest errors
+# ---------------------------------------------------------------------------
+
+class TestRulesPath:
+    def test_custom_rules_spec_reaches_the_binary(self, env, monkeypatch, tmp_path):
+        """The serialised spec file is passed as argv[3] to the rules binary."""
+        marker_dir = tmp_path / "markers"
+        marker_dir.mkdir()
+        monkeypatch.setenv("MARKER_DIR", str(marker_dir))
+        _write_binary(env, """#!/bin/sh
+cp "$3" "$MARKER_DIR/spec_seen.txt"
+printf 'timestamp,equity\\n2020-03-03,101000\\n' > ml_equity.csv
+printf 'timestamp,direction,profit\\n' > ml_trades.csv
+exit 0
+""")
+        from research.api.schemas import RuleCondition, StrategyRules
+
+        spec = StrategySpec(rules=StrategyRules(
+            entry=[RuleCondition(indicator="RSI", period=7, op="<", value=25)],
+        ), name="dip")
+        runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05", strategy=spec)
+
+        seen = (marker_dir / "spec_seen.txt").read_text()
+        assert "version: 1" in seen
+        assert "name: dip" in seen
+        assert "entry: RSI:7 < 25" in seen
+
+    def test_response_echoes_strategy_and_flags_ml_experimental(self, env):
+        default = runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05")
+        assert default.strategy == {"template": "buy_hold", "params": {}}
+        assert default.experimental is False
+
+        ml = runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05",
+                                 strategy=_ML)
+        assert ml.strategy == {"template": "ml_transformer"}
+        assert ml.experimental is True
+
+    def test_unknown_ticker_is_honest_422_not_a_substitute(self, env):
+        """ADR-047: the transparent path never silently swaps symbols."""
+        with pytest.raises(runner.BacktestInputError, match="No market data"):
+            runner.run_backtest(["ZZZZ"], "2020-03-02", "2020-03-05")
+
+    def test_cache_key_distinguishes_strategies(self, env):
+        first = runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05")
+        same = runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05")
+        other = runner.run_backtest(
+            ["AAPL"], "2020-03-02", "2020-03-05",
+            strategy=StrategySpec(template="rsi_reversion"),
+        )
+        assert first.cached is False
+        assert same.cached is True
+        assert other.cached is False
+
+    def test_invalid_template_params_raise_input_error(self, env):
+        with pytest.raises(runner.BacktestInputError, match="smaller than"):
+            runner.run_backtest(
+                ["AAPL"], "2020-03-02", "2020-03-05",
+                strategy=StrategySpec(template="ma_cross",
+                                      params={"fast": 50, "slow": 10}),
+            )

@@ -65,6 +65,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           date_start: msg.payload.dateStart,
           date_end: msg.payload.dateEnd,
           skip_train: msg.payload.skipTrain ?? true,
+          // undefined is dropped by JSON.stringify → server default strategy
+          strategy: msg.payload.strategy ?? undefined,
         }),
       })
         .then((result) => {

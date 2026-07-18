@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Boundary size caps (P1-8): fail fast on oversized payloads before any
@@ -46,6 +46,83 @@ class ContextResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Strategy specification (Phase 8.2/8.3, ADR-046)
+#
+# Canonical schema, mirrored exactly by the C++ RuleSpec parser: whitelisted
+# indicators/operators, ≤ 8 AND-ed conditions per side, periods 2–250,
+# long-only. Never accepts code.
+# ---------------------------------------------------------------------------
+
+INDICATORS = ("PRICE", "SMA", "EMA", "RSI", "HIGH_N", "LOW_N")
+RULE_OPS = ("<", ">", "crosses_above", "crosses_below")
+MAX_CONDITIONS_PER_SIDE = 8
+STRATEGY_TEMPLATES = ("buy_hold", "ma_cross", "rsi_reversion", "breakout",
+                      "ml_transformer")
+
+
+class RuleCondition(BaseModel):
+    indicator: Literal["PRICE", "SMA", "EMA", "RSI", "HIGH_N", "LOW_N"]
+    period: Optional[int] = Field(default=None, ge=2, le=250)
+    op: Literal["<", ">", "crosses_above", "crosses_below"]
+    value: Optional[float] = Field(default=None, ge=-1e9, le=1e9)
+    other_indicator: Optional[
+        Literal["PRICE", "SMA", "EMA", "RSI", "HIGH_N", "LOW_N"]
+    ] = None
+    other_period: Optional[int] = Field(default=None, ge=2, le=250)
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> "RuleCondition":
+        if self.indicator == "PRICE":
+            if self.period is not None:
+                raise ValueError("PRICE takes no period")
+        elif self.period is None:
+            raise ValueError(f"{self.indicator} requires a period")
+
+        has_value = self.value is not None
+        has_other = self.other_indicator is not None
+        if has_value == has_other:
+            raise ValueError(
+                "exactly one of 'value' or 'other_indicator' is required"
+            )
+        if has_other:
+            if self.other_indicator == "PRICE":
+                if self.other_period is not None:
+                    raise ValueError("PRICE takes no period")
+            elif self.other_period is None:
+                raise ValueError(f"{self.other_indicator} requires a period")
+        if self.op in ("crosses_above", "crosses_below") and not has_other:
+            raise ValueError("cross operators require 'other_indicator'")
+        return self
+
+
+class StrategyRules(BaseModel):
+    entry: list[RuleCondition] = Field(min_length=1,
+                                       max_length=MAX_CONDITIONS_PER_SIDE)
+    exit: list[RuleCondition] = Field(default_factory=list,
+                                      max_length=MAX_CONDITIONS_PER_SIDE)
+
+
+class StrategySpec(BaseModel):
+    template: Optional[
+        Literal["buy_hold", "ma_cross", "rsi_reversion", "breakout",
+                "ml_transformer"]
+    ] = None
+    params: dict[str, float] = Field(default_factory=dict)
+    rules: Optional[StrategyRules] = None
+    name: Optional[str] = Field(default=None, max_length=64)
+
+    @model_validator(mode="after")
+    def template_xor_rules(self) -> "StrategySpec":
+        if (self.template is None) == (self.rules is None):
+            raise ValueError("provide exactly one of 'template' or 'rules'")
+        if self.rules is not None and self.params:
+            raise ValueError("'params' only applies to templates")
+        if len(self.params) > 8:
+            raise ValueError("too many template params")
+        return self
+
+
+# ---------------------------------------------------------------------------
 # POST /api/backtest
 # ---------------------------------------------------------------------------
 
@@ -54,6 +131,7 @@ class BacktestRequest(BaseModel):
     date_start: str    # YYYY-MM-DD
     date_end: str      # YYYY-MM-DD
     skip_train: bool = True
+    strategy: Optional[StrategySpec] = None   # None → buy_hold default
 
     @field_validator("tickers")
     @classmethod
@@ -97,6 +175,8 @@ class BacktestResponse(BaseModel):
     trades: list[dict]
     cached: bool = False
     warning: Optional[str] = None
+    strategy: Optional[dict] = None      # resolved strategy echo (8.3)
+    experimental: bool = False           # True only for the ML path
 
 
 # ---------------------------------------------------------------------------

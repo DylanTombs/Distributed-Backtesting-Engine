@@ -26,13 +26,28 @@ const metricsGrid     = document.getElementById("metrics-grid");
 const linkDashboard   = document.getElementById("link-dashboard");
 const msgBox          = document.getElementById("msg-box");
 const equityCanvas    = document.getElementById("equity-chart");
+const tickerInput     = document.getElementById("ticker-input");
+const btnAddTicker    = document.getElementById("btn-add-ticker");
+const strategySelect  = document.getElementById("strategy-select");
+const btnDeleteSaved  = document.getElementById("btn-delete-saved");
+const strategyParams  = document.getElementById("strategy-params");
+const rulesBuilder    = document.getElementById("rules-builder");
+const entryRulesEl    = document.getElementById("entry-rules");
+const exitRulesEl     = document.getElementById("exit-rules");
+const btnAddEntry     = document.getElementById("btn-add-entry");
+const btnAddExit      = document.getElementById("btn-add-exit");
+const strategyNameEl  = document.getElementById("strategy-name");
+const btnSaveStrategy = document.getElementById("btn-save-strategy");
+const strategyHint    = document.getElementById("strategy-hint");
+const resultStrategy  = document.getElementById("result-strategy");
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
-let currentTickers = [];
-let currentTabId   = null;
-let allEvents      = [];     // EventSummary[] from GET /api/events
+let currentTickers   = [];
+let currentTabId     = null;
+let allEvents        = [];   // EventSummary[] from GET /api/events
+let savedStrategies  = {};   // name → API strategy object (storage.sync)
 
 // ---------------------------------------------------------------------------
 // Init
@@ -66,7 +81,10 @@ let allEvents      = [];     // EventSummary[] from GET /api/events
   }
   populateEventDropdown(allEvents);
 
-  // 3. Check session cache for this tab
+  // 3. Strategy panel (templates + saved strategies from storage.sync)
+  await initStrategyPanel();
+
+  // 4. Check session cache for this tab
   if (currentTabId) {
     const cached = await send("GET_CACHED_RESULT", { tabId: currentTabId });
     if (cached && !cached.error) {
@@ -74,7 +92,7 @@ let allEvents      = [];     // EventSummary[] from GET /api/events
     }
   }
 
-  // 4. Extract context from page (sends raw text from the active tab)
+  // 5. Extract context from page (sends raw text from the active tab)
   await detectContext(tab);
 })().catch((err) => {
   showMsg(`Initialisation error: ${err.message}`, "error");
@@ -210,6 +228,13 @@ function renderTickerChips(tickers) {
 // Run backtest
 // ---------------------------------------------------------------------------
 btnRun.addEventListener("click", async () => {
+  const strat = currentStrategyPayload();
+  if (!strat.ok) {
+    setStrategyHint(strat.error, true);
+    return;
+  }
+  setStrategyHint("");
+
   btnRun.disabled = true;
   btnRun.classList.add("loading");
   btnRun.textContent = "▶ Running";
@@ -221,6 +246,7 @@ btnRun.addEventListener("click", async () => {
     dateEnd:   dateEnd.value,
     skipTrain: true,
     tabId:     currentTabId,
+    strategy:  strat.strategy,
   });
 
   btnRun.classList.remove("loading");
@@ -241,6 +267,25 @@ btnRun.addEventListener("click", async () => {
 function renderResults(result) {
   panelResults.style.display = "block";
   metricsGrid.innerHTML = "";
+
+  // Strategy line + experimental caveat (textContent only — API values are
+  // untrusted, same rule as the metric cards)
+  resultStrategy.textContent = "";
+  const stratName = describeStrategy(result.strategy);
+  if (stratName) {
+    resultStrategy.textContent = `Strategy: ${stratName} `;
+    if (result.experimental) {
+      const tag = document.createElement("span");
+      tag.className = "experimental-tag";
+      tag.textContent = "(experimental — AAPL-trained model)";
+      resultStrategy.appendChild(tag);
+    }
+  }
+
+  // A data-substitution warning must be visible, not small print (8.6)
+  if (result.warning) {
+    showMsg(result.warning, "info");
+  }
 
   // Metric cards — built with createElement/textContent only. API values are
   // untrusted; never interpolate them into innerHTML (XSS hardening, P1-4).
@@ -396,4 +441,273 @@ function send(type, payload = {}) {
       }
     });
   });
+}
+
+// ---------------------------------------------------------------------------
+// Ticker input (Phase 8.4 — user-supplied symbols)
+// ---------------------------------------------------------------------------
+const TICKER_RE = /^[A-Z0-9.\-]{1,7}$/;
+
+function addTickerFromInput() {
+  const t = tickerInput.value.trim().toUpperCase();
+  if (!t) return;
+  if (!TICKER_RE.test(t)) {
+    showMsg(`"${t}" is not a valid ticker symbol`, "error");
+    return;
+  }
+  clearMsg();
+  if (!currentTickers.includes(t)) {
+    currentTickers = [t, ...currentTickers];   // typed ticker takes priority
+    renderTickerChips(currentTickers);
+  }
+  tickerInput.value = "";
+  btnRun.disabled = !dateStart.value;
+}
+
+btnAddTicker.addEventListener("click", addTickerFromInput);
+tickerInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") addTickerFromInput();
+});
+
+// ---------------------------------------------------------------------------
+// Strategy panel (Phase 8.4)
+// ---------------------------------------------------------------------------
+async function initStrategyPanel() {
+  savedStrategies = await new Promise((resolve) => {
+    chrome.storage.sync.get({ savedStrategies: {} },
+      ({ savedStrategies: s }) => resolve(s ?? {}));
+  });
+  rebuildStrategySelect();
+  strategySelect.value = "buy_hold";
+  onStrategySelectChange();
+}
+
+function rebuildStrategySelect(selectValue) {
+  strategySelect.innerHTML = "";
+
+  const groupTemplates = document.createElement("optgroup");
+  groupTemplates.label = "Templates";
+  for (const t of STRATEGY_TEMPLATES) {
+    const opt = document.createElement("option");
+    opt.value = t.id;
+    opt.textContent = t.label;
+    groupTemplates.appendChild(opt);
+  }
+  strategySelect.appendChild(groupTemplates);
+
+  const custom = document.createElement("option");
+  custom.value = "custom";
+  custom.textContent = "Custom rules…";
+  strategySelect.appendChild(custom);
+
+  const names = Object.keys(savedStrategies).sort();
+  if (names.length) {
+    const groupSaved = document.createElement("optgroup");
+    groupSaved.label = "Saved";
+    for (const name of names) {
+      const opt = document.createElement("option");
+      opt.value = `saved:${name}`;
+      opt.textContent = name;
+      groupSaved.appendChild(opt);
+    }
+    strategySelect.appendChild(groupSaved);
+  }
+
+  const groupExp = document.createElement("optgroup");
+  groupExp.label = "Experimental";
+  const ml = document.createElement("option");
+  ml.value = "ml";
+  ml.textContent = ML_TEMPLATE.label;
+  groupExp.appendChild(ml);
+  strategySelect.appendChild(groupExp);
+
+  if (selectValue) strategySelect.value = selectValue;
+}
+
+function onStrategySelectChange() {
+  const v = strategySelect.value;
+  const isCustom = v === "custom";
+  const isSaved = v.startsWith("saved:");
+
+  rulesBuilder.style.display = isCustom ? "block" : "none";
+  btnDeleteSaved.style.display = isSaved ? "block" : "none";
+  strategyParams.innerHTML = "";
+  setStrategyHint("");
+
+  if (isCustom) {
+    if (!entryRulesEl.children.length) addRuleRow(entryRulesEl);
+    return;
+  }
+  if (v === "ml") {
+    setStrategyHint(
+      "Runs the transformer model — experimental; results reflect its AAPL training data.");
+    return;
+  }
+  if (isSaved) {
+    setStrategyHint("Saved rule strategy — runs as configured.");
+    return;
+  }
+
+  const meta = STRATEGY_TEMPLATES.find((t) => t.id === v);
+  if (!meta) return;
+  for (const p of meta.params) {
+    const field = document.createElement("div");
+    field.className = "param-field";
+    const label = document.createElement("label");
+    label.textContent = p.label;
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = p.min;
+    input.max = p.max;
+    input.value = p.def;
+    input.dataset.param = p.key;
+    field.appendChild(label);
+    field.appendChild(input);
+    strategyParams.appendChild(field);
+  }
+}
+
+strategySelect.addEventListener("change", onStrategySelectChange);
+
+function addRuleRow(container) {
+  if (container.children.length >= MAX_RULES_PER_SIDE) {
+    setStrategyHint(`At most ${MAX_RULES_PER_SIDE} rules per side`, true);
+    return;
+  }
+  const row = document.createElement("div");
+  row.className = "rule-row";
+
+  const ind = makeSelect(STRATEGY_INDICATORS, "SMA");
+  const period = makeNumber(14);
+  const op = makeSelect(STRATEGY_OPS, "<");
+  const rhsInd = makeSelect(["value", ...STRATEGY_INDICATORS], "value");
+  const rhsVal = makeNumber(30);   // doubles as rhs period when rhs is indicator
+
+  const sync = () => {
+    period.style.visibility = ind.value === "PRICE" ? "hidden" : "visible";
+    rhsVal.style.visibility =
+      rhsInd.value === "PRICE" ? "hidden" : "visible";
+  };
+  ind.addEventListener("change", sync);
+  rhsInd.addEventListener("change", sync);
+
+  const remove = document.createElement("button");
+  remove.className = "rule-remove";
+  remove.textContent = "✕";
+  remove.title = "Remove rule";
+  remove.addEventListener("click", () => row.remove());
+
+  for (const el of [ind, period, op, rhsInd, rhsVal, remove]) row.appendChild(el);
+  container.appendChild(row);
+  sync();
+}
+
+function makeSelect(options, value) {
+  const s = document.createElement("select");
+  for (const o of options) {
+    const opt = document.createElement("option");
+    opt.value = o;
+    opt.textContent = o === "value" ? "number…" : o;
+    s.appendChild(opt);
+  }
+  s.value = value;
+  return s;
+}
+
+function makeNumber(value) {
+  const i = document.createElement("input");
+  i.type = "number";
+  i.value = value;
+  return i;
+}
+
+function readRuleRows(container) {
+  return [...container.children].map((row) => {
+    const [ind, period, op, rhsInd, rhsVal] = row.querySelectorAll("select, input");
+    const usesValue = rhsInd.value === "value";
+    return {
+      indicator: ind.value,
+      period: period.value,
+      op: op.value,
+      rhsKind: usesValue ? "value" : "indicator",
+      value: rhsVal.value,
+      otherIndicator: usesValue ? null : rhsInd.value,
+      otherPeriod: rhsVal.value,
+    };
+  });
+}
+
+/** Build the API strategy payload from the current panel state. */
+function currentStrategyPayload() {
+  const v = strategySelect.value;
+  if (v.startsWith("saved:")) {
+    const saved = savedStrategies[v.slice(6)];
+    return saved
+      ? { ok: true, strategy: saved }
+      : { ok: false, error: "Saved strategy not found" };
+  }
+  if (v === "ml") return buildStrategyPayload({ kind: "ml" });
+  if (v === "custom") {
+    return buildStrategyPayload({
+      kind: "custom",
+      entryRows: readRuleRows(entryRulesEl),
+      exitRows: readRuleRows(exitRulesEl),
+      name: strategyNameEl.value,
+    });
+  }
+  const params = {};
+  for (const input of strategyParams.querySelectorAll("input")) {
+    params[input.dataset.param] = input.value;
+  }
+  return buildStrategyPayload({ kind: "template", template: v, params });
+}
+
+btnAddEntry.addEventListener("click", () => addRuleRow(entryRulesEl));
+btnAddExit.addEventListener("click", () => addRuleRow(exitRulesEl));
+
+btnSaveStrategy.addEventListener("click", () => {
+  const name = strategyNameEl.value.trim();
+  if (!name) {
+    setStrategyHint("Give the strategy a name to save it", true);
+    return;
+  }
+  const built = currentStrategyPayload();
+  if (!built.ok) {
+    setStrategyHint(built.error, true);
+    return;
+  }
+  savedStrategies = { ...savedStrategies, [name]: built.strategy };
+  chrome.storage.sync.set({ savedStrategies }, () => {
+    rebuildStrategySelect(`saved:${name}`);
+    onStrategySelectChange();
+    setStrategyHint(`Saved "${name}" — available on any article.`);
+  });
+});
+
+btnDeleteSaved.addEventListener("click", () => {
+  const v = strategySelect.value;
+  if (!v.startsWith("saved:")) return;
+  const name = v.slice(6);
+  const { [name]: _removed, ...rest } = savedStrategies;
+  savedStrategies = rest;
+  chrome.storage.sync.set({ savedStrategies }, () => {
+    rebuildStrategySelect("buy_hold");
+    onStrategySelectChange();
+  });
+});
+
+function setStrategyHint(text, isError = false) {
+  strategyHint.textContent = text ?? "";
+  strategyHint.className = "strategy-hint" + (isError ? " error" : "");
+}
+
+function describeStrategy(strategy) {
+  if (!strategy) return "Buy & Hold vs benchmark";
+  if (strategy.template) {
+    const meta = STRATEGY_TEMPLATES.find((t) => t.id === strategy.template);
+    if (meta) return meta.label;
+    if (strategy.template === "ml_transformer") return ML_TEMPLATE.label;
+    return strategy.template;
+  }
+  return strategy.name || "Custom rules";
 }
