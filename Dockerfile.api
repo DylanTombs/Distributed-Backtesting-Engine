@@ -1,0 +1,29 @@
+# =============================================================================
+# Dockerfile.api — hosted FastAPI bridge for Fly.io (Phase 7.4)
+#
+# Slim Python image, no C++ build stage: the pre-compiled linux/amd64
+# ml_backtest binary (produced by scripts/deploy_api.sh via
+# Dockerfile.backtester) is bundled directly. Model artefacts
+# (transformer.pt, scaler CSVs) live on a Fly volume mounted at /app/models
+# so they survive redeploys without bloating the image.
+# =============================================================================
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY research/ ./research/
+COPY backtester/ml_backtest ./backtester/ml_backtest
+COPY backtester/data/ ./backtester/data/
+COPY backtest_config.yaml .
+
+RUN chmod +x ./backtester/ml_backtest
+
+ENV PROJECT_ROOT=/app
+
+EXPOSE 8080
+
+CMD ["uvicorn", "research.api.app:app", "--host", "0.0.0.0", "--port", "8080"]

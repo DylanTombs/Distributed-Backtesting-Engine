@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TradingTransformer — Privacy Policy</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 20px; color: #1e293b; line-height: 1.6; }
+    h1 { color: #0369a1; }
+    h2 { margin-top: 32px; }
+    code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>TradingTransformer Privacy Policy</h1>
+  <p><em>Effective date: 2026-07-03</em></p>
+
+  <h2>Summary</h2>
+  <p>TradingTransformer does not track you. There are no analytics, no
+  cookies, no advertising identifiers, and no sale or sharing of data with
+  third parties for their own purposes.</p>
+
+  <h2>What the extension stores</h2>
+  <p>Two values, in Chrome's own extension storage
+  (<code>chrome.storage.sync</code>): the API server URL and the API key you
+  enter in Settings. Backtest results are cached per browser tab in
+  <code>chrome.storage.session</code> and discarded when the browser closes.
+  Nothing else is stored on your device.</p>
+
+  <h2>What is sent to the server</h2>
+  <p>When you request a backtest or event detection, the extension sends the
+  text of the article you are viewing (or its URL) and your API key to the
+  API server you configured. If you use a self-hosted server, no data leaves
+  your machine's network at all.</p>
+
+  <h2>What the hosted server keeps</h2>
+  <ul>
+    <li>Request-level logs (timestamp, endpoint, response code) with a
+    7-day retention.</li>
+    <li>Backtest result files, deleted automatically after 7 days.</li>
+    <li>Article text is processed in memory per request. Where event
+    detection needs an AI fallback, an excerpt (max 1,500 characters) is
+    forwarded to Anthropic's API for extraction and is subject to
+    <a href="https://www.anthropic.com/legal/privacy">Anthropic's privacy
+    policy</a>; it is not used for model training.</li>
+  </ul>
+
+  <h2>What is never collected</h2>
+  <p>Browsing history, page content from pages you do not explicitly
+  backtest, personal identifiers, financial account information.</p>
+
+  <h2>Permissions</h2>
+  <p>The extension requests <code>activeTab</code>/<code>scripting</code>
+  (read the article you invoke it on), <code>storage</code> (save your
+  settings), and host access used solely to contact the API server URL you
+  configure. It never injects content into or reads pages except the one
+  you explicitly backtest.</p>
+
+  <h2>Contact</h2>
+  <p>Questions or deletion requests: open an issue at
+  <a href="https://github.com/DylanTombs/Distributed-Backtesting-Engine">the
+  project repository</a>.</p>
+</body>
+</html>

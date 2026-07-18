@@ -8,17 +8,23 @@ Endpoints:
     POST /api/backtest   — run a windowed backtest and return results
     GET  /api/events     — list all known events (for the Quick Picks dropdown)
     GET  /api/health     — liveness check
-"""
-from __future__ import annotations
 
+Note: no ``from __future__ import annotations`` here — slowapi's decorator
+wrapper cannot resolve postponed (string) annotations for the request
+models, which breaks FastAPI's schema generation.
+"""
 import logging
 import threading
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
+from .auth import require_api_key
 from .cors import add_cors
+from .rate_limit import BACKTEST_LIMIT, CONTEXT_LIMIT, limiter
 from .runner import BacktestInputError, is_model_loaded, run_backtest, warmup_cache
 from .schemas import (
     BacktestRequest,
@@ -47,6 +53,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 add_cors(app)
+
+# Per-IP rate limiting (Phase 7.2). /api/health stays exempt for monitors.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Reject oversized bodies before deserialisation (P1-8). 2 MB comfortably
 # exceeds the largest legitimate payload (MAX_RAW_TEXT_CHARS of UTF-8 text).
@@ -105,8 +115,13 @@ def list_events() -> list[EventSummary]:
 # POST /api/context
 # ---------------------------------------------------------------------------
 
-@app.post("/api/context", response_model=ContextResponse)
-def extract_context(req: ContextRequest) -> ContextResponse:
+@app.post(
+    "/api/context",
+    response_model=ContextResponse,
+    dependencies=[Depends(require_api_key)],
+)
+@limiter.limit(CONTEXT_LIMIT)
+def extract_context(request: Request, req: ContextRequest) -> ContextResponse:
     if not req.has_content():
         raise HTTPException(status_code=422, detail="Provide url or raw_text")
 
@@ -158,8 +173,13 @@ def extract_context(req: ContextRequest) -> ContextResponse:
 # POST /api/backtest
 # ---------------------------------------------------------------------------
 
-@app.post("/api/backtest", response_model=BacktestResponse)
-def trigger_backtest(req: BacktestRequest) -> BacktestResponse:
+@app.post(
+    "/api/backtest",
+    response_model=BacktestResponse,
+    dependencies=[Depends(require_api_key)],
+)
+@limiter.limit(BACKTEST_LIMIT)
+def trigger_backtest(request: Request, req: BacktestRequest) -> BacktestResponse:
     if not is_model_loaded():
         raise HTTPException(
             status_code=400,

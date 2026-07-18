@@ -1,6 +1,15 @@
 # Phase 7 — Web Store Submission & Hosted Deployment
 
-**Status:** Planning
+**Status:** In progress — 7.1–7.3 implemented and tested; 7.4/7.5 scaffolded; 7.6 pending
+
+| Task | State | Notes |
+|------|-------|-------|
+| 7.1 Settings page & configurable API base | ✅ Done | API key field, Test Connection, URL validation (P1-5), manifest 1.0.0 + `options_ui`; `scripting` permission retained (popup.js needs it — corrects the target manifest below) |
+| 7.2 API key auth & rate limiting | ✅ Done | `auth.py`, `rate_limit.py` (slowapi), CORS `X-API-Key` header (P1-2), extension-ID pinning via `ALLOWED_EXTENSION_IDS` (P1-3, ADR-043) |
+| 7.3 Per-run output directories | ✅ Done | ADR-027 resolved (ADR-044); UUID run_ids (P1-9), `MAX_CONCURRENT_BACKTESTS` semaphore (P1-10), 90 s binary timeout |
+| 7.4 Fly.io deployment | 🔧 Scaffolded | `Dockerfile.api`, `fly.toml`, `deploy_api.sh`, compose `hosted` profile written; actual deploy needs a Fly.io account + volume + secrets |
+| 7.5 CWS packaging | 🔧 Scaffolded | `pack_extension.sh` verified, icons complete, store copy + privacy policy written; screenshots captured at submission |
+| 7.6 CWS submission | ⏳ Pending | Procedural: developer account, privacy-policy hosting, upload, review |
 **Prerequisites:** Phase 6 (contextual backtest browser extension)
 **Ambition level:** High — first public release; converts a developer tool into a consumer product
 

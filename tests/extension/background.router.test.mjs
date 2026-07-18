@@ -35,6 +35,7 @@ function loadBackground(options = {}) {
   const {
     openPopupBehavior = "resolve",
     fetchBody = DEFAULT_FETCH_BODY,
+    syncValues = {},        // stored chrome.storage.sync values (e.g. apiKey)
   } = options;
 
   const calls = {
@@ -57,8 +58,8 @@ function loadBackground(options = {}) {
     storage: {
       sync: {
         // Mirrors chrome behaviour: returns stored values merged over the
-        // defaults object. Nothing stored in tests, so defaults come back.
-        get(defaults, cb) { cb({ ...defaults }); },
+        // defaults object.
+        get(defaults, cb) { cb({ ...defaults, ...syncValues }); },
       },
       session: {
         set(items, cb) {
@@ -290,3 +291,42 @@ function loadBackgroundRaw() {
   vm.runInContext(BACKGROUND_SOURCE, sandbox, { filename: "background.js" });
   return { listener };
 }
+
+// ---------------------------------------------------------------------------
+// Phase 7.1: X-API-Key header handling in fetchApi
+// ---------------------------------------------------------------------------
+
+test("fetchApi sends X-API-Key header when an apiKey is stored", async () => {
+  const { dispatch, calls } = loadBackground({
+    syncValues: { apiKey: "key_abc123", apiBase: "https://api.example.com" },
+  });
+
+  await dispatch({ type: "HEALTH_CHECK" });
+
+  assert.equal(calls.fetch.length, 1);
+  assert.equal(calls.fetch[0].url, "https://api.example.com/api/health");
+  assert.equal(calls.fetch[0].options.headers["X-API-Key"], "key_abc123");
+});
+
+test("fetchApi omits X-API-Key header when no apiKey is stored", async () => {
+  const { dispatch, calls } = loadBackground();
+
+  await dispatch({ type: "HEALTH_CHECK" });
+
+  assert.equal(calls.fetch.length, 1);
+  assert.ok(!("X-API-Key" in calls.fetch[0].options.headers));
+});
+
+test("POST requests carry the X-API-Key header too", async () => {
+  const { dispatch, calls } = loadBackground({
+    syncValues: { apiKey: "key_abc123" },
+  });
+
+  await dispatch({
+    type: "RUN_BACKTEST",
+    payload: { tickers: ["AAPL"], dateStart: "2024-06-01", dateEnd: "2024-06-30", tabId: 1 },
+  });
+
+  assert.equal(calls.fetch[0].options.headers["X-API-Key"], "key_abc123");
+  assert.equal(calls.fetch[0].options.method, "POST");
+});

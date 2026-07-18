@@ -89,9 +89,9 @@ class TestStaleOutputs:
         with pytest.raises(RuntimeError, match="produced no output"):
             runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05")
 
-        # The stale files were unlinked before the run — nothing to re-read
-        assert not (env.project / "ml_equity.csv").exists()
-        assert not (env.project / "ml_trades.csv").exists()
+        # Per-run isolation (7.3): stray project-root files are never read —
+        # the binary ran in a fresh temp dir that produced nothing.
+        assert (env.project / "ml_equity.csv").read_text() == stale
 
     def test_stale_equity_values_never_reach_the_response(self, env):
         """A fresh run with pre-existing stale files returns only fresh data."""
@@ -240,3 +240,92 @@ exit 0
 """)
         result = runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05")
         assert len(result.trades) == 500
+
+
+# ---------------------------------------------------------------------------
+# Phase 7.3: per-run directories — concurrency isolation, unique run_ids,
+# bounded parallelism
+# ---------------------------------------------------------------------------
+
+_PER_SYMBOL_BINARY = """#!/bin/sh
+sleep 0.2
+case "$2" in
+  AAPL) v=111111 ;;
+  MSFT) v=222222 ;;
+  *)    v=999 ;;
+esac
+printf 'timestamp,equity\\n2020-03-03,%s\\n' "$v" > ml_equity.csv
+printf 'timestamp,direction,profit\\n' > ml_trades.csv
+exit 0
+"""
+
+
+class TestPerRunIsolation:
+    def test_concurrent_runs_do_not_bleed_outputs(self, env):
+        """Two overlapping runs each get their own symbol's results."""
+        import threading
+
+        (env.data / "MSFT_features.csv").write_text(_FEATURE_CSV)
+        _write_binary(env, _PER_SYMBOL_BINARY)
+
+        results: dict[str, object] = {}
+        errors: list[Exception] = []
+
+        def run(symbol: str) -> None:
+            try:
+                results[symbol] = runner.run_backtest(
+                    [symbol], "2020-03-02", "2020-03-05"
+                )
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=run, args=(s,)) for s in ("AAPL", "MSFT")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert errors == []
+        assert results["AAPL"].equity[0].equity == 111111.0
+        assert results["MSFT"].equity[0].equity == 222222.0
+
+    def test_run_ids_are_unique_within_the_same_second(self, env):
+        """P1-9: the UUID suffix prevents same-second run_id collisions."""
+        r1 = runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-04")
+        r2 = runner.run_backtest(["AAPL"], "2020-03-02", "2020-03-05")
+        assert r1.run_id != r2.run_id
+
+    def test_semaphore_bounds_concurrent_binary_invocations(
+        self, env, monkeypatch, tmp_path
+    ):
+        """P1-10: with one run slot, binary invocations never overlap."""
+        import threading
+
+        marker_dir = tmp_path / "markers"
+        marker_dir.mkdir()
+        monkeypatch.setenv("MARKER_DIR", str(marker_dir))
+        monkeypatch.setattr(runner, "_run_slots", threading.BoundedSemaphore(1))
+
+        (env.data / "MSFT_features.csv").write_text(_FEATURE_CSV)
+        _write_binary(env, """#!/bin/sh
+if [ -f "$MARKER_DIR/running" ]; then touch "$MARKER_DIR/overlap"; fi
+touch "$MARKER_DIR/running"
+sleep 0.2
+rm -f "$MARKER_DIR/running"
+printf 'timestamp,equity\\n2020-03-03,101000\\n' > ml_equity.csv
+printf 'timestamp,direction,profit\\n' > ml_trades.csv
+exit 0
+""")
+
+        threads = [
+            threading.Thread(
+                target=lambda s=s: runner.run_backtest([s], "2020-03-02", "2020-03-05")
+            )
+            for s in ("AAPL", "MSFT")
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert not (marker_dir / "overlap").exists()

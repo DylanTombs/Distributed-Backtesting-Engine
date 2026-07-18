@@ -3,12 +3,14 @@
 Binary interface (positional args):
   ml_backtest <feature_csv> <symbol> [model_pt] [feature_scaler_csv] [target_scaler_csv]
 
-The binary writes ml_equity.csv and ml_trades.csv to its CWD. We run it
-from PROJECT_ROOT so the default model/scaler paths resolve correctly.
+The binary writes ml_equity.csv and ml_trades.csv to its CWD. Each request
+runs the binary inside its own temporary directory (Phase 7.3, resolving
+ADR-027), so concurrent requests share no mutable state; all input paths
+are passed absolute.
 
 For each backtest request:
   1. Filter the symbol's feature CSV to the requested date window.
-  2. Run the binary against that filtered CSV.
+  2. Run the binary against that filtered CSV inside a per-run temp dir.
   3. Read equity + trades; compute metrics in Python.
   4. Archive and return.
 """
@@ -17,11 +19,13 @@ from __future__ import annotations
 import csv
 import logging
 import math
+import os
 import shutil
 import subprocess
 import tempfile
 import threading
 import time
+import uuid
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
@@ -53,11 +57,14 @@ class BacktestInputError(RuntimeError):
     tickers) rather than a server fault. Messages are safe to return to the
     client verbatim — no paths, no build instructions."""
 
-# Serialise binary invocations: the C++ binary always writes ml_equity.csv and
-# ml_trades.csv to PROJECT_ROOT (its CWD), so concurrent requests would race on
-# those files.  The LRU cache lookup remains concurrent — only _execute() is
-# serialised.
-_binary_lock = threading.Lock()
+# Bound concurrent binary invocations (P1-10): per-run temp dirs remove the
+# need for full serialisation, but an unbounded process count would exhaust a
+# small hosted VM (warm-up plus live traffic). Default 2 suits shared-cpu-1x.
+_MAX_CONCURRENT_RUNS = max(1, int(os.environ.get("MAX_CONCURRENT_BACKTESTS", "2")))
+_run_slots = threading.BoundedSemaphore(_MAX_CONCURRENT_RUNS)
+
+# Hard wall-clock cap per binary invocation.
+_BINARY_TIMEOUT_S = 90
 
 
 # ---------------------------------------------------------------------------
@@ -114,8 +121,7 @@ def run_backtest(
         logger.info("Cache hit for %s", cache_key)
         return BacktestResponse(**{**cached.model_dump(), "cached": True})
 
-    with _binary_lock:
-        result = _execute(tickers, date_start, date_end)
+    result = _execute(tickers, date_start, date_end)
     _cache.put(cache_key, result)
     return result
 
@@ -169,21 +175,25 @@ def _execute(tickers: list[str], date_start: str, date_end: str) -> BacktestResp
     # Find the best available symbol with a feature CSV on disk
     symbol, src_csv, warning = _resolve_symbol(tickers)
 
-    # Remove any output files left behind by a previous invocation so a run
-    # that writes nothing can never be mistaken for a fresh result (P0-1).
-    (PROJECT_ROOT / "ml_equity.csv").unlink(missing_ok=True)
-    (PROJECT_ROOT / "ml_trades.csv").unlink(missing_ok=True)
+    # UUID suffix keeps run_ids collision-free under concurrency (P1-9);
+    # the timestamp prefix keeps archive directories human-sortable.
+    run_id = f"{datetime.now():%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:8]}"
 
-    tmp_dir = Path(tempfile.mkdtemp(prefix="tt_backtest_"))
+    # Per-run working directory: the binary's CWD, so its fixed-name output
+    # files are isolated per request. A run that writes nothing can never be
+    # mistaken for a fresh result — the directory starts empty (P0-1).
+    run_dir = Path(tempfile.mkdtemp(prefix="tt_run_"))
     try:
-        filtered_csv = _filter_csv(src_csv, symbol, date_start, date_end, tmp_dir)
+        filtered_csv = _filter_csv(src_csv, symbol, date_start, date_end, run_dir)
 
-        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        _run_binary(filtered_csv, symbol)
-        return _archive_and_read(run_id, symbol, date_start, date_end, warning=warning)
+        with _run_slots:
+            _run_binary(filtered_csv, symbol, cwd=run_dir)
+        return _archive_and_read(
+            run_dir, run_id, symbol, date_start, date_end, warning=warning
+        )
 
     finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        shutil.rmtree(run_dir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +277,7 @@ def _filter_csv(
 # Binary invocation
 # ---------------------------------------------------------------------------
 
-def _run_binary(feature_csv: Path, symbol: str) -> None:
+def _run_binary(feature_csv: Path, symbol: str, cwd: Path) -> None:
     model_pt      = MODEL_DIR / "transformer.pt"
     feat_scaler   = MODEL_DIR / "feature_scaler.csv"
     target_scaler = MODEL_DIR / "target_scaler.csv"
@@ -284,12 +294,18 @@ def _run_binary(feature_csv: Path, symbol: str) -> None:
     logger.info("Running: %s", " ".join(cmd))
     t0 = time.monotonic()
 
-    proc = subprocess.run(
-        cmd,
-        cwd=str(PROJECT_ROOT),   # binary writes ml_equity.csv here
-        capture_output=True,
-        text=True,
-    )
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(cwd),   # binary writes ml_equity.csv into the per-run dir
+            capture_output=True,
+            text=True,
+            timeout=_BINARY_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"ml_backtest exceeded the {_BINARY_TIMEOUT_S}s time limit"
+        ) from exc
 
     logger.info("Binary exited %.1f s  rc=%d", time.monotonic() - t0, proc.returncode)
     if proc.stdout:
@@ -309,16 +325,16 @@ def _run_binary(feature_csv: Path, symbol: str) -> None:
 # ---------------------------------------------------------------------------
 
 def _archive_and_read(
-    run_id: str, symbol: str, date_start: str, date_end: str,
+    run_dir: Path, run_id: str, symbol: str, date_start: str, date_end: str,
     warning: Optional[str] = None,
 ) -> BacktestResponse:
-    # Binary writes to PROJECT_ROOT (its CWD)
-    equity_src = PROJECT_ROOT / "ml_equity.csv"
-    trades_src = PROJECT_ROOT / "ml_trades.csv"
+    # Binary writes to its per-run CWD
+    equity_src = run_dir / "ml_equity.csv"
+    trades_src = run_dir / "ml_trades.csv"
 
-    # _execute() unlinks both files before the run, so absence here means the
-    # binary exited 0 without producing output — fail loudly rather than
-    # returning an empty (or previously stale) result (P0-1).
+    # The run directory started empty, so absence here means the binary
+    # exited 0 without producing output — fail loudly rather than returning
+    # an empty result (P0-1).
     if not equity_src.exists():
         raise RuntimeError("ml_backtest produced no output")
 
