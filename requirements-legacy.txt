@@ -1,0 +1,10 @@
+# Legacy: dependencies for the archived transformer training code under
+# research/transformer/. That code is retained as a record of how
+# models/transformer.pt was built — it is not on the product path, is not
+# covered by the test suite, and is not installed by CI.
+#
+# Install alongside requirements.txt only if you need to read or re-run it.
+torch>=2.0.0
+scikit-learn>=0.24.0
+matplotlib>=3.4.0
+joblib>=1.2.0
