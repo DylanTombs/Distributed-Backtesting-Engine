@@ -1,15 +1,13 @@
 [run]
 source = research
 omit =
-    research/exportModel.py
-    research/transformer/Interface.py
+    # Legacy: transformer training code, kept as a record of how the model was
+    # built. Not on the product path and intentionally unexercised — its tests
+    # were removed with the training pipeline.
+    research/transformer/*
+    # Reference oracle for the C++ RuleStrategy indicators; exercised
+    # indirectly through tests/test_indicator_crossval.py.
     research/features/technicalIndicators.py
-    research/validation/walk_forward.py
-    research/validation/wf_report.py
-    research/training/sweep.py
-    research/analysis/EquityCurve.py
-    research/dashboard/app.py
-    research/dashboard/pages/*.py
     research/api/runner.py
 
 [report]
