@@ -60,6 +60,7 @@ class BacktestInputError(RuntimeError):
     tickers) rather than a server fault. Messages are safe to return to the
     client verbatim — no paths, no build instructions."""
 
+
 # Bound concurrent binary invocations (P1-10): per-run temp dirs remove the
 # need for full serialisation, but an unbounded process count would exhaust a
 # small hosted VM (warm-up plus live traffic). Default 2 suits shared-cpu-1x.

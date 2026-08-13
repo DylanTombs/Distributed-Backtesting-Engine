@@ -1,0 +1,122 @@
+# =============================================================================
+# backtest_config.yaml — ML backtest configuration
+#
+# Usage:  ./ml_backtest backtest_config.yaml
+#
+# All paths are resolved inside the Docker container.
+# Mount your feature CSVs and model artefacts before running:
+#   docker compose run --rm backtester
+# See docker-compose.yml for volume mount definitions.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Model artefacts produced by research/exportModel.py
+# ---------------------------------------------------------------------------
+model_pt:            /models/transformer.pt
+feature_scaler_csv:  /models/feature_scaler.csv
+target_scaler_csv:   /models/target_scaler.csv
+
+# ---------------------------------------------------------------------------
+# Output directory — equity curve, trade log, and metrics CSV are written here
+# ---------------------------------------------------------------------------
+output_dir: /output
+
+# ---------------------------------------------------------------------------
+# Symbols to backtest
+#
+# Multi-symbol layout:
+#   symbol / feature_csv           — first instrument (required)
+#   symbol_1 / feature_csv_1       — additional instruments (optional)
+#   ...up to symbol_19 / feature_csv_19
+#
+# Each feature CSV must be produced by research/features/pipeline.py and
+# contain the 34 model feature columns in the expected order.
+# ---------------------------------------------------------------------------
+symbol:      AAPL
+feature_csv: /backtester/data/AAPL_features.csv
+
+# Example — add more symbols by uncommenting and providing the feature CSVs:
+# symbol_1:      MSFT
+# feature_csv_1: /backtester/data/MSFT_features.csv
+# symbol_2:      GOOGL
+# feature_csv_2: /backtester/data/GOOGL_features.csv
+
+# =============================================================================
+# Capital & position sizing
+# =============================================================================
+
+initial_cash:       100000.0  # Starting portfolio capital ($)
+risk_fraction:      0.10      # Fraction of equity risked per LONG signal (10%)
+max_symbol_exposure: 0.20     # Max weight in any single symbol (20%)
+max_total_exposure:  0.80     # Max total long exposure across all symbols (80%)
+max_position_size:  10000     # Hard per-symbol share cap (RiskManager gate)
+
+# =============================================================================
+# Execution realism
+# =============================================================================
+
+half_spread:        0.0005    # Half bid-ask spread per fill (0.05%)
+slippage_fraction:  0.0005    # Directional slippage per trade (0.05%)
+market_impact:      0.0       # Price impact per share ($); 0 = disabled
+commission:         1.0       # Fixed commission per fill ($)
+
+# =============================================================================
+# Performance metrics
+# =============================================================================
+
+risk_free_rate:     0.0       # Annualised risk-free rate for Sharpe calculation
+                              # e.g. 0.05 for 5% (US 3-month T-bill proxy)
+
+# =============================================================================
+# Correlation-aware sizing
+#
+# When a new signal's symbol is highly correlated with currently-held symbols,
+# the position size is discounted proportionally.
+# =============================================================================
+
+correlation_window:     60    # Rolling window (days) for Pearson correlation
+correlation_threshold:  0.7   # Correlation above this triggers size discount
+                              # (discount scales from 0% at threshold to 50% at 1.0)
+
+# =============================================================================
+# Signal thresholds
+#
+# buy_threshold:   fractional predicted upside required to emit a LONG signal.
+#                  0.005 = 0.5% — signal only when model predicts >0.5% gain.
+# exit_threshold:  fractional predicted decline required to emit an EXIT signal.
+#                  0.000 = any predicted decline triggers exit (most sensitive).
+# Both values must be in [0.0, 0.1].  Changing these does not require recompilation.
+# =============================================================================
+
+buy_threshold:   0.005   # 0.5% predicted upside required for LONG
+exit_threshold:  0.000   # Any predicted decline triggers EXIT
+
+# =============================================================================
+# Short Selling  (Task 4.1)
+#
+# allow_short:       Set to true to enable SHORT signals.  When false (default)
+#                    the strategy only goes long; bearish predictions are ignored.
+#                    Disabled by default to preserve backward-compatible behaviour.
+#
+# short_margin_rate: Fraction of the position's notional value that must be held
+#                    as margin when shorting (1.0 = 100% cash-backed, no leverage).
+#                    Must be in (0.0, 2.0].
+# =============================================================================
+
+allow_short:       false   # Disabled — backward-compatible default
+short_margin_rate: 1.0     # 100% margin (no leverage)
+
+# =============================================================================
+# Logging
+#
+# log_level:  trace | debug | info | warn | error | critical
+#   info  — trade executions, lifecycle events (recommended for production)
+#   debug — per-signal decisions, slippage breakdown (verbose)
+#   trace — per-bar feature vectors (very verbose)
+#
+# log_file:   path for the log file; written alongside console output.
+#             Set to empty string ("") to disable file logging.
+# =============================================================================
+
+log_level:  info
+log_file:   output/backtest.log

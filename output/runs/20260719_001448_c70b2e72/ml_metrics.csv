@@ -1,0 +1,2 @@
+symbol,date_start,date_end,days,total_return_pct,max_drawdown_pct,sharpe_ratio,win_rate_pct,initial_equity,final_equity,n_trades
+AAPL,2000-03-10,2002-10-09,648,-9.06,10.39,-0.966,0.0,100273.0,91188.4,0

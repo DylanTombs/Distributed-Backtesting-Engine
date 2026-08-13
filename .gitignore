@@ -35,15 +35,10 @@ env/
 *.pth
 *.pkl
 
-# Pipeline output (regenerated from raw data)
-features/
-
 # Test / run artefacts
 .coverage
-training.log
 ml_equity.csv
 ml_trades.csv
-output/runs/
 
 # Claude Code worktrees
 .claude/worktrees/
