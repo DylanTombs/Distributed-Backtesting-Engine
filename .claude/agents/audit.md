@@ -22,11 +22,10 @@ Read these files in order. Do not skip any of them.
 1. `DECISIONS.md` — decisions already made; flag findings that conflict with
    an existing ADR but do not relitigate settled decisions.
 2. `ARCHITECTURE.md` — component contracts and layer boundaries.
-3. The active phase file (check `CLAUDE.md` → "Current State" to find it,
-   e.g. `PHASE_7.md`) — what this phase was supposed to ship.
+3. `CLAUDE.md` — the product path, key invariants, and what is legacy.
 
-After reading, state in one sentence: what this phase built, and which layers
-it touched.
+After reading, state in one sentence: what this change set builds, and which
+layers it touches.
 
 ## Step 2 — Enumerate the changed files
 

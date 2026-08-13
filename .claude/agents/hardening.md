@@ -70,8 +70,8 @@ agent receives:
   Run it after each fix, not just at the end.
 - One logical commit per fix. Commit message format:
   `fix(scope): description` — e.g. `fix(api): validate date ordering in BacktestRequest`
-- Do not modify completed phase files (`PHASE_1.md` through the previous
-  phase). The active phase file may be updated to note follow-on work.
+- Do not modify `research/transformer/` — it is legacy reference code
+  (see `CLAUDE.md` → "Legacy code").
 - Do not modify `DECISIONS.md` — the orchestrator handles that in Step 5.
 - If a fix reveals a new finding not in the audit report, note it in the
   commit message body but do not fix it without orchestrator approval.

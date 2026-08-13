@@ -2,19 +2,40 @@
 
 This file provides guidance to Claude Code when working in this repository.
 
+## What this project is
+
+A contextual backtesting engine driven from the browser. The user reads a news
+article, clicks the extension, and gets a backtest of a transparent rule
+strategy over the window that article describes.
+
+The flow is one line:
+
+```
+Chrome extension → FastAPI (research/api) → C++ backtester/backtest → equity curve
+```
+
+Everything else in the repo exists to serve that path, or is explicitly marked
+legacy.
+
 ## Source of Truth Hierarchy
 
 Before proposing any change, read in this order:
 1. `DECISIONS.md` — architectural decisions already made; do not relitigate them
 2. `ARCHITECTURE.md` — system design and component contracts
-3. The active phase file (currently `PHASE_6.md`) — what is in scope right now
+
+Phase files (`PHASE_1.md`–`PHASE_10.md`), `PDR.md`, and `LEARN.md` were removed
+in the Phase 10 cleanup. They are recoverable from git history if a decision's
+rationale is ever needed.
 
 ## Workflow Conventions
 
 ### During a session
-- When you make an architectural decision (library choice, interface design, tradeoff), append it to `DECISIONS.md` in the existing format before ending the task
-- When a Phase 6 task is completed, mark it done in `PHASE_6.md` and note any follow-on work discovered
-- Never modify a completed phase file (PHASE_1–5.md) without explicit instruction
+- `DECISIONS.md` holds ten decisions, each one sentence of decision and one of
+  rationale. It is a fixed-size document, not a log. Add to it only when a
+  decision genuinely reshapes the system (why C++, how strategies are
+  expressed) — and if you add one, say which of the ten it displaces.
+  Implementation-level choices (library versions, file layout, build wiring)
+  belong in the commit message, not here.
 
 ### Commits
 - One logical change per commit
@@ -35,12 +56,8 @@ Before proposing any change, read in this order:
 
 ```bash
 pytest tests/ -v --tb=short --cov=research --cov-report=term-missing --cov-fail-under=80
-pytest tests/test_dataset.py::test_windows_do_not_cross_ticker_boundaries -v
 flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-streamlit run research/dashboard/app.py        # → http://localhost:8501
 uvicorn research.api.app:app --port 8502 --reload
-python run_pipeline.py --data-dir data/ --archive-run
-python run_pipeline.py --data-dir data/ --skip-train
 ```
 
 ### C++ Backtester
@@ -49,97 +66,125 @@ python run_pipeline.py --data-dir data/ --skip-train
 cmake -S backtester -B build
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
-cmake -S backtester -B build -DENABLE_COVERAGE=ON
-./backtester/ml_backtest <feature_csv> <symbol> [model_pt] [feature_scaler_csv] [target_scaler_csv]
+./backtester/backtest <spec_json> <ohlcv_csv> <symbol>
+```
+
+### Deploy
+
+```bash
+./scripts/deploy_cloudrun.sh     # builds root Dockerfile, deploys to Cloud Run
+./scripts/pack_extension.sh      # zips extension/ for Chrome Web Store
 ```
 
 ---
 
 ## Architecture
 
-Two independent layers with a strict contract at their boundary.
-
-### Research Layer (Python)
-`research/features/pipeline.py` → 34-column feature CSVs  
-`research/transformer/Interface.py` → training → `checkpoints/`  
-`research/exportModel.py` → TorchScript export → `models/transformer.pt`  
-`research/training/sweep.py` → Optuna TPE+Hyperband (SQLite-persistent)  
-`research/validation/walk_forward.py` → expanding-window cross-validation  
-`run_pipeline.py` → pipeline orchestrator  
-
-### Execution Layer (C++)
-Event order is a hard invariant: `MARKET → SIGNAL → ORDER → FILL`. The queue must fully drain before the next bar is fetched. Violating this causes fill/signal race conditions.
-
-Key components in `backtester/include/`: `market/`, `strategy/` (MLStrategy buffers 30-bar window → LibTorch), `portfolio/` (risk sizing, correlation discount, benchmark), `execution/` (slippage model), `config/` (YAML parser).
-
-`ml_backtest` compiles only when LibTorch is found. Tests run without it via missing `ML_STRATEGY_ENABLED`.
-
 ### FastAPI Bridge (`research/api/`)
-Bridges Chrome extension → C++ binary. Runner prepends 60 lookback bars, writes temp CSV, invokes binary from `PROJECT_ROOT`, caches up to 50 results (LRU, pre-warmed at startup for all curated events).  
+Bridges Chrome extension → C++ binary. Runner prepends 60 lookback bars, writes
+a temp CSV, invokes the binary from `PROJECT_ROOT`, caches up to 50 results
+(LRU, pre-warmed at startup for all curated events).
 Endpoints: `POST /api/context`, `POST /api/backtest`, `GET /api/events`, `GET /api/health`
 
+Modules: `app.py` (routes), `auth.py` (API key), `cors.py`, `rate_limit.py`,
+`runner.py` (binary invocation + cache), `schemas.py`, `strategies.py` (rule
+spec resolution).
+
+### Market data (`research/data/fetcher.py`)
+On-demand OHLCV fetch. Disabled in tests via `DATA_FETCH_DISABLED=1`
+(autouse fixture in `tests/conftest.py`).
+
 ### Context Extraction (`research/context/`)
-Two-pass: rule-based (keyword match, 41 curated events, confidence score) → Claude Haiku 4.5 fallback only when confidence < 0.6.
+Two-pass: rule-based (keyword match, 41 curated events, confidence score) →
+Claude Haiku 4.5 fallback only when confidence < 0.6.
+
+### Execution Layer (C++)
+Event order is a hard invariant: `MARKET → SIGNAL → ORDER → FILL`. The queue
+must fully drain before the next bar is fetched. Violating this causes
+fill/signal race conditions.
+
+Key components in `backtester/include/`: `market/`, `strategy/`, `portfolio/`
+(risk sizing, correlation discount, benchmark), `execution/` (slippage model),
+`config/` (YAML parser).
+
+Two binaries, both tracked as pre-built — rebuild only when C++ strategy or
+execution code changes:
+- `backtester/backtest` — transparent rule strategies (RuleStrategy), no
+  LibTorch. **This is the product path.**
+- `backtester/ml_backtest` — experimental ML strategy (LibTorch +
+  `models/transformer.pt`, AAPL-trained). Opt-in via
+  `{"template": "ml_transformer"}`, flagged `experimental` end-to-end. Runs off
+  the checked-in `backtester/data/AAPL_features.csv`.
 
 ### Chrome Extension (`extension/`)
-Manifest V3. All API calls routed through service worker (`background.js`). FAB injected by `content.js`. Popup renders equity curve on canvas.
+Manifest V3. All API calls routed through the service worker
+(`background.js`). FAB injected by `content.js`. Popup renders equity curve on
+canvas.
+
+---
+
+## Legacy code
+
+`research/transformer/` is the transformer training implementation, retained as
+a record of how `models/transformer.pt` was built. It is **not** on the product
+path, has no tests, and is omitted from coverage. Its dependencies (torch,
+scikit-learn) live in `requirements-legacy.txt` and are not installed by CI.
+
+Do not extend it, wire it into the API, or treat it as a maintained module. If
+it needs to change, that is a signal the ML path is being revived — raise that
+as a decision first.
+
+The feature pipeline that fed it (`research/features/pipeline.py`), the Optuna
+sweep, walk-forward validation, the Streamlit dashboard, and the training
+corpora were removed in the Phase 10 cleanup.
 
 ---
 
 ## Key Invariants
 
-**Feature column order is a hard contract** across:
-- `research/features/pipeline.py` output columns
-- `backtester/include/strategy/MLStrategy.hpp` (`MODEL_FEATURE_COLUMNS`)
-- `scripts/convert_scalers.py` row order
+**Feature column order is a hard contract** between
+`backtester/data/AAPL_features.csv`, `backtester/include/strategy/MLStrategy.hpp`
+(`MODEL_FEATURE_COLUMNS`), and `models/feature_scaler.csv`. A mismatch throws a
+size-mismatch error at startup — explicit failure, not silent corruption.
 
-A mismatch throws a size-mismatch error at startup — explicit failure, not silent corruption.
-
-**`technicalIndicators.py` is the single source of indicator logic.** Never reimplement indicators elsewhere.
+**`research/features/technicalIndicators.py` is the reference oracle** for the
+C++ indicator implementations. `tests/test_indicator_crossval.py` pins the two
+against each other via `tests/fixtures/indicator_crossval.csv` (regenerate with
+`scripts/gen_indicator_fixture.py`). Never reimplement indicators elsewhere.
 
 ---
 
 ## Test Coverage
 
-`.coveragerc` excludes training scripts, validation scripts, dashboard pages, and `research/api/runner.py`. 80% gate applies to the rest. C++ tests exclude LibTorch paths via missing `ML_STRATEGY_ENABLED`.
+`.coveragerc` omits legacy transformer code, the indicator oracle, and
+`research/api/runner.py`. The 80% gate applies to the rest; current coverage is
+~94%. C++ tests exclude LibTorch paths via missing `ML_STRATEGY_ENABLED`.
 
 ---
 
 ## Agents
 
-Two reusable workflow agents live in `.claude/agents/`. Invoke them by
-name at the start of phase closeout:
+Two reusable workflow agents live in `.claude/agents/`.
 
 ### `audit`
-Pre-merge audit. Reads `DECISIONS.md`, `ARCHITECTURE.md`, and the active
-phase file, then spawns three parallel subagents (extension, API, context
-layers) to find silent failures, race conditions, security gaps, and
-coverage holes. Produces a prioritised P0/P1/P2 report. **Never writes
-code** — report must be signed off before any fix work begins.
-
-Run at: start of every phase closeout, before opening a merge PR.
+Pre-merge audit. Reads `DECISIONS.md` and `ARCHITECTURE.md`, then spawns three
+parallel subagents (extension, API, context layers) to find silent failures,
+race conditions, security gaps, and coverage holes. Produces a prioritised
+P0/P1/P2 report. **Never writes code** — report must be signed off before any
+fix work begins.
 
 ### `hardening`
-Post-audit fix execution. Takes a signed-off audit report and executes
-all findings using parallel worktree subagents (one per layer). Merges
-results, resolves `DECISIONS.md` conflicts, adds regression tests, and
-generates a PR description. Requires a green baseline before starting.
-
-Run at: immediately after the user signs off on an audit report.
+Post-audit fix execution. Takes a signed-off audit report and executes all
+findings using parallel worktree subagents (one per layer). Merges results,
+resolves `DECISIONS.md` conflicts, adds regression tests, and generates a PR
+description. Requires a green baseline before starting.
 
 ---
 
 ## Current State
 
-Active branch: `feat/phase-9-strategy-v2` (stacked on phase-8 → phase-7; PRs #21/#22 open)  
-Active phase: `PHASE_9.md` — strategy engine v2: indicator cross-validation, short direction, durable OHLCV cache  
-Phase 8: code complete (rule engine, on-demand OHLCV, strategy API/UI, torch-free image)  
-Phase 7: code complete (settings/auth/rate limiting/per-run dirs/deploy scaffolding); 7.6 CWS submission pending  
-Phase 6: complete (browser extension + post-audit hardening)  
-Phases 1–5: complete, do not modify their phase files  
+Phases 1–10 complete. The repo was cleaned up in Phase 10: the research and
+training layers were removed, leaving the browser-driven backtesting product
+plus the legacy transformer reference.
 
-Two-track engine (Phase 8):
-- `backtester/backtest` — transparent rule strategies (RuleStrategy), no LibTorch; the product path. Data: on-demand OHLCV via `research/data/fetcher.py`
-- `backtester/ml_backtest` — experimental ML strategy (LibTorch + transformer.pt), AAPL-trained; opt-in via `{"template": "ml_transformer"}`, flagged `experimental` end-to-end
-
-Both pre-compiled binaries are tracked — rebuild only when C++ strategy or execution code changes
+Outstanding: Chrome Web Store submission (was 7.6).

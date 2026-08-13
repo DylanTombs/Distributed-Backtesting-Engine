@@ -3,14 +3,12 @@
 #
 # Usage:  ./ml_backtest backtest_config.yaml
 #
-# All paths are resolved inside the Docker container.
-# Mount your feature CSVs and model artefacts before running:
-#   docker compose run --rm backtester
-# See docker-compose.yml for volume mount definitions.
+# All paths are resolved inside the Docker container built from the root
+# Dockerfile. Feature CSVs and model artefacts are baked into the image.
 # =============================================================================
 
 # ---------------------------------------------------------------------------
-# Model artefacts produced by research/exportModel.py
+# Model artefacts (legacy ML path — see CLAUDE.md "Legacy code")
 # ---------------------------------------------------------------------------
 model_pt:            /models/transformer.pt
 feature_scaler_csv:  /models/feature_scaler.csv
@@ -29,8 +27,9 @@ output_dir: /output
 #   symbol_1 / feature_csv_1       — additional instruments (optional)
 #   ...up to symbol_19 / feature_csv_19
 #
-# Each feature CSV must be produced by research/features/pipeline.py and
-# contain the 34 model feature columns in the expected order.
+# Each feature CSV must contain the 34 model feature columns in the expected
+# order (see CLAUDE.md "Key Invariants"). The generating pipeline was removed
+# in the Phase 10 cleanup; backtester/data/AAPL_features.csv is checked in.
 # ---------------------------------------------------------------------------
 symbol:      AAPL
 feature_csv: /backtester/data/AAPL_features.csv
